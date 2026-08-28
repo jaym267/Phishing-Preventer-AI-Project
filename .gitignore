@@ -1,0 +1,9 @@
+# clasp links a local folder to a specific Apps Script project. It contains
+# your scriptId — harmless-ish, but it is machine-specific, so keep it local.
+.clasp.json
+
+# clasp login credentials. NEVER commit these.
+.clasprc.json
+
+node_modules/
+.DS_Store
