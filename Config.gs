@@ -34,6 +34,24 @@ var VERDICT = {
 };
 
 /**
+ * Gmail label names used by enforcement (Stage 4). Nested names create the
+ * parent "ScamShield" label automatically.
+ */
+var LABELS = {
+  QUARANTINE: 'ScamShield/Quarantine',
+  SUSPICIOUS: 'ScamShield/Suspicious'
+};
+
+/** Action strings written to the "Action Taken" column. */
+var ACTION = {
+  NONE: 'none',
+  OBSERVE_ONLY: 'none (observe-only)',
+  QUARANTINED: 'QUARANTINED',
+  FLAGGED: 'FLAGGED',
+  ALLOWLISTED: 'skipped (allowlist)'
+};
+
+/**
  * Everything tunable, in one object.
  *
  * Rule of thumb for this file: a number that appears twice in the codebase, or

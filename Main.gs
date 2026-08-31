@@ -3,25 +3,37 @@
  *
  * Functions WITHOUT a trailing underscore are the ones you can select in the
  * Apps Script editor's "Run" dropdown. Keep that list short and intentional:
- *   checkSetup()    Stage 0 — prove the key, scopes and network work
- *   initLogSheet()  Stage 1 — create/report the log spreadsheet (Logger.gs)
- *   scanInbox()     Stage 1 — read the inbox and log one row per new message
+ *   checkSetup()       prove the key, scopes and network work
+ *   initLogSheet()     create/report the log spreadsheet (Logger.gs)
+ *   scanInbox()        read the inbox, classify, and log one row per message
+ *   testClassifier()   three canned payloads through the API (Classifier.gs)
+ *   installTriggers()  start running on a schedule
+ *   removeTriggers()   stop running on a schedule
+ *   listTriggers()     show what is scheduled
+ *   restoreMessage(id) undo a quarantine and allowlist the sender
+ *   clearKillSwitch()  re-enable enforcement after you have fixed a fault
+ *   sendDigestNow()    send the weekly family summary now (Digest.gs)
  *
  * ===========================================================================
- * WHAT THIS FILE DELIBERATELY DOES NOT DO (hard rules 1 and 2)
+ * THE CEILING ON WHAT THIS SCRIPT MAY DO (hard rules 1 and 2)
  * ===========================================================================
- * There is no addLabel, no moveToArchive, no markRead, and no moveToTrash
- * anywhere in this stage. Until the ENFORCE flag is deliberately switched on in
- * Stage 4, this script only READS your mailbox and WRITES to a spreadsheet.
- * If you are editing this file and about to add one of those calls, you are
- * leaving Stage 1 — do it on purpose.
+ * The strongest action anywhere in this project is: apply a label, remove from
+ * the inbox (archive), and mark read. There is NO moveToTrash call and there
+ * must never be one — the gmail.modify scope we declare cannot delete mail at
+ * all, which is why it was chosen over the broader mail.google.com scope.
  *
- * One consequence is worth internalizing, because it makes dedupe
- * load-bearing rather than an optimization: because we never mark anything
- * read, every message stays in the search results for the FULL 20-minute
- * window and is returned by every run in between. Without isProcessed_(), a
- * 10-minute trigger would log each message two or three times. That is exactly
- * what the "run it again, get zero new rows" acceptance test checks.
+ * Every mutation lives in exactly two functions, applyAction_() and
+ * restoreMessage(), and applyAction_ does nothing at all unless BOTH
+ * CONFIG.ENFORCE is true and the kill switch is clear. If you are adding a
+ * mailbox write anywhere else in this file, stop and reconsider.
+ *
+ * One consequence is worth internalizing, because it makes dedupe load-bearing
+ * rather than an optimization: a message that is not quarantined is never
+ * marked read, so it stays in the search results for the FULL 20-minute window
+ * and is returned by every run in between. Without isProcessed_(), a 10-minute
+ * trigger would classify each message two or three times — paying for it every
+ * time. That is exactly what the "run it again, get zero new rows" acceptance
+ * test checks.
  */
 
 /**
@@ -122,7 +134,8 @@ function scanInbox() {
   var stats = {
     threads: 0, candidates: 0, logged: 0,
     skippedProcessed: 0, skippedAllowlist: 0, errors: 0,
-    classifyErrors: 0, scam: 0, suspicious: 0, safe: 0, bailReason: ''
+    classifyErrors: 0, scam: 0, suspicious: 0, safe: 0,
+    quarantined: 0, flagged: 0, bailReason: ''
   };
 
   // Take the lock with ZERO wait. A second, overlapping run has nothing useful
@@ -161,6 +174,12 @@ function scanInbox() {
 
     var candidates = collectCandidateMessages_(threads, cutoffMs);
     stats.candidates = candidates.length;
+
+    // Decide ONCE per run whether we are allowed to touch the mailbox. Both
+    // switches must agree: the deliberate CONFIG.ENFORCE flag, and the kill
+    // switch that trips automatically when the script is failing repeatedly.
+    var killed = checkKillSwitch_();
+    var enforcing = !killed && isEnforcementActive_();
 
     // Warm both caches before the loop: two batched Sheet reads per run, total.
     getAllowlist_();
@@ -240,8 +259,24 @@ function scanInbox() {
         else if (result.verdict === VERDICT.SUSPICIOUS) stats.suspicious++;
         else stats.safe++;
 
-        // STAGE 4 SEAM: enforcement (label + archive + mark read) hooks in
-        // here, gated on CONFIG.ENFORCE. Until then the action is always none.
+        // ---- Stage 4: act ------------------------------------------------
+        var decision = decideAction_(result, enforcing);
+        var applied;
+        var actionError = '';
+        try {
+          applied = applyAction_(msg, decision);
+        } catch (err) {
+          // A failed label/archive must be visible, but it must not stop the
+          // run — and it must not be recorded as though it had succeeded.
+          logError_('applyAction', err, id);
+          applied = { action: ACTION.NONE, note: '' };
+          actionError = 'action failed: ' + err.message;
+          stats.errors++;
+        }
+
+        if (applied.action === ACTION.QUARANTINED) stats.quarantined++;
+        else if (applied.action === ACTION.FLAGGED) stats.flagged++;
+
         logDecision_({
           messageId: id,
           messageDate: payload.messageDate,
@@ -253,8 +288,8 @@ function scanInbox() {
           verdict: result.verdict,
           confidence: result.confidence,
           reasons: result.reasons,
-          actionTaken: 'none (observe-only)',
-          error: ''
+          actionTaken: applied.action + (applied.note ? ' — ' + applied.note : ''),
+          error: actionError
         });
         stats.logged++;
 
@@ -269,7 +304,8 @@ function scanInbox() {
     SpreadsheetApp.flush();
 
     Logger.log(
-      'scanInbox: threads=' + stats.threads +
+      'scanInbox: mode=' + (enforcing ? 'ENFORCING' : 'observe-only') +
+      ' threads=' + stats.threads +
       ' candidates=' + stats.candidates +
       ' logged=' + stats.logged +
       ' skippedProcessed=' + stats.skippedProcessed +
@@ -277,6 +313,8 @@ function scanInbox() {
       ' scam=' + stats.scam +
       ' suspicious=' + stats.suspicious +
       ' safe=' + stats.safe +
+      ' quarantined=' + stats.quarantined +
+      ' flagged=' + stats.flagged +
       ' classifyErrors=' + stats.classifyErrors +
       ' errors=' + stats.errors +
       ' elapsedMs=' + (Date.now() - startMs) +
@@ -781,4 +819,239 @@ function notifyOwner_(subject, body) {
   } catch (err) {
     Logger.log('notifyOwner_: could not send mail — ' + err.message);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Stage 4 — enforcement
+//
+// This is the only part of the project that changes your mailbox, so read the
+// ceiling once more before editing anything here:
+//
+//   The strongest action allowed is: apply a label, remove from the inbox
+//   (archive), and mark read. NOTHING here may delete mail. There is no
+//   moveToTrash call in this codebase and there must never be one. The
+//   gmail.modify OAuth scope we declare is physically incapable of deleting,
+//   which is exactly why it was chosen over the broader mail.google.com scope.
+// ---------------------------------------------------------------------------
+
+/** Run-scoped cache so we resolve the labels once per execution. */
+var LABEL_CACHE_ = null;
+
+/**
+ * Creates the ScamShield labels if they do not exist, and returns them.
+ * Idempotent.
+ *
+ * @return {{quarantine: GmailLabel, suspicious: GmailLabel}}
+ */
+function ensureLabels_() {
+  if (LABEL_CACHE_) return LABEL_CACHE_;
+  LABEL_CACHE_ = {
+    quarantine: GmailApp.getUserLabelByName(LABELS.QUARANTINE) ||
+                GmailApp.createLabel(LABELS.QUARANTINE),
+    suspicious: GmailApp.getUserLabelByName(LABELS.SUSPICIOUS) ||
+                GmailApp.createLabel(LABELS.SUSPICIOUS)
+  };
+  return LABEL_CACHE_;
+}
+
+/**
+ * Decides what should happen to a classified message.
+ *
+ * PURE — reads only its arguments and CONFIG, and touches nothing. All the
+ * policy lives here so it can be tested exhaustively without a mailbox.
+ *
+ * Policy:
+ *   scam AND confidence >= threshold  -> QUARANTINED (label, archive, mark read)
+ *   suspicious, any confidence        -> FLAGGED (label only, stays in inbox)
+ *   scam BELOW threshold              -> FLAGGED (the conservative choice)
+ *   safe                              -> nothing
+ *   error                             -> nothing (hard rule 4; never reaches here)
+ *
+ * @param {{verdict: string, confidence: number}} result
+ * @param {boolean} enforcing
+ * @return {{action: string, label: string, archive: boolean, markRead: boolean}}
+ */
+function decideAction_(result, enforcing) {
+  var none = { action: ACTION.OBSERVE_ONLY, label: '', archive: false, markRead: false };
+  if (!enforcing) return none;
+
+  // Defensive: an 'error' or unrecognized verdict must never cause an action.
+  if (result.verdict === VERDICT.SAFE) return { action: ACTION.NONE, label: '', archive: false, markRead: false };
+  if (result.verdict !== VERDICT.SCAM && result.verdict !== VERDICT.SUSPICIOUS) return none;
+
+  if (result.verdict === VERDICT.SCAM &&
+      typeof result.confidence === 'number' &&
+      result.confidence >= CONFIG.CONFIDENCE_THRESHOLD) {
+    return { action: ACTION.QUARANTINED, label: LABELS.QUARANTINE, archive: true, markRead: true };
+  }
+
+  // Either 'suspicious', or 'scam' that did not clear the bar. Label it so it is
+  // visible, but leave it where the recipient can see it.
+  return { action: ACTION.FLAGGED, label: LABELS.SUSPICIOUS, archive: false, markRead: false };
+}
+
+/**
+ * Carries out a decision against a real message.
+ *
+ * IMPORTANT Apps Script behavior — labels and archiving are THREAD-level
+ * operations in Gmail, not message-level. There is no message.addLabel(). That
+ * creates a real hazard: if a scam lands as a reply inside an existing genuine
+ * conversation, archiving the thread would hide that whole conversation from
+ * the person we are trying to protect.
+ *
+ * So a quarantine is downgraded to a flag whenever the thread holds more than
+ * one message. Labeling a mixed thread is recoverable and visible; archiving
+ * one is exactly the "false quarantine of a real email" the classification
+ * prompt tells the model to fear most.
+ *
+ * @param {GmailMessage} msg
+ * @param {Object} decision From decideAction_.
+ * @return {{action: string, note: string}} What actually happened.
+ */
+function applyAction_(msg, decision) {
+  if (decision.action === ACTION.OBSERVE_ONLY || decision.action === ACTION.NONE) {
+    return { action: decision.action, note: '' };
+  }
+
+  var labels = ensureLabels_();
+  var thread = msg.getThread();
+  var note = '';
+
+  if (decision.archive && thread.getMessageCount() > 1) {
+    // Downgrade. Label only, leave the conversation in the inbox.
+    thread.addLabel(labels.suspicious);
+    return {
+      action: ACTION.FLAGGED,
+      note: 'downgraded from QUARANTINE: thread has ' + thread.getMessageCount() +
+            ' messages and archiving it would hide the whole conversation'
+    };
+  }
+
+  if (decision.label === LABELS.QUARANTINE) {
+    thread.addLabel(labels.quarantine);
+  } else {
+    thread.addLabel(labels.suspicious);
+  }
+
+  if (decision.archive) thread.moveToArchive();
+  if (decision.markRead) msg.markRead();
+
+  return { action: decision.action, note: note };
+}
+
+/**
+ * Manual undo for a false positive. Run from the editor with the message ID
+ * copied out of the Decisions sheet.
+ *
+ * Puts the message's thread back in the inbox, removes the Quarantine label,
+ * and adds the sender to the allowlist so it cannot happen again.
+ *
+ * @param {string} messageId
+ */
+function restoreMessage(messageId) {
+  if (!messageId) {
+    Logger.log('restoreMessage needs a Message ID — copy one from the Decisions tab.');
+    return;
+  }
+  var id = String(messageId).replace(/^'/, '').trim();
+
+  var msg;
+  try {
+    msg = GmailApp.getMessageById(id);
+  } catch (err) {
+    Logger.log('Could not find a message with ID "' + id + '": ' + err.message);
+    return;
+  }
+  if (!msg) {
+    Logger.log('Could not find a message with ID "' + id + '".');
+    return;
+  }
+
+  var labels = ensureLabels_();
+  var thread = msg.getThread();
+  thread.removeLabel(labels.quarantine);
+  thread.removeLabel(labels.suspicious);
+  thread.moveToInbox();
+
+  var sender = extractEmailAddress_(msg.getFrom());
+  var added = addToAllowlist_(sender, 'restored ' +
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'));
+
+  logDecision_({
+    messageId: id,
+    messageDate: msg.getDate(),
+    sender: msg.getFrom(),
+    replyTo: '',
+    subject: msg.getSubject(),
+    bodyPreview: '',
+    urlCount: '',
+    verdict: VERDICT.ALLOWLISTED,
+    confidence: '',
+    reasons: ['restored manually — this was a false positive'],
+    actionTaken: 'RESTORED',
+    error: ''
+  });
+
+  Logger.log('Restored "' + msg.getSubject() + '" to the inbox.');
+  Logger.log(added
+    ? 'Added ' + sender + ' to the allowlist — it will never be scanned again.'
+    : sender + ' was already on the allowlist.');
+}
+
+// ---------------------------------------------------------------------------
+// Kill switch
+// ---------------------------------------------------------------------------
+
+/**
+ * Disables enforcement automatically if the script is failing repeatedly.
+ *
+ * The reasoning: a burst of errors means we do not understand what is
+ * happening, and a system that does not understand what is happening should not
+ * be moving someone's mail. Better to stop acting and shout.
+ *
+ * The flag is stored in Script Properties rather than in code so that pushing a
+ * new version cannot silently re-enable enforcement. Clearing it is a
+ * deliberate manual act.
+ *
+ * @return {boolean} true if the kill switch is (now) tripped.
+ */
+function checkKillSwitch_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty(PROP.ENFORCE_DISABLED_BY_KILL_SWITCH)) return true;
+
+  var since = Date.now() - (CONFIG.KILL_SWITCH_WINDOW_MIN * 60 * 1000);
+  var recent;
+  try {
+    recent = getErrorsSince_(since);
+  } catch (err) {
+    return false;   // cannot read the log; do not trip on a guess
+  }
+  if (recent.length <= CONFIG.KILL_SWITCH_ERROR_LIMIT) return false;
+
+  var reason = recent.length + ' errors in the last ' +
+               CONFIG.KILL_SWITCH_WINDOW_MIN + ' minutes (limit ' +
+               CONFIG.KILL_SWITCH_ERROR_LIMIT + ') at ' + new Date().toISOString();
+  props.setProperty(PROP.ENFORCE_DISABLED_BY_KILL_SWITCH, reason);
+
+  Logger.log('KILL SWITCH TRIPPED — ' + reason);
+  notifyOwner_('ScamShield: enforcement disabled automatically',
+    'ScamShield has stopped quarantining mail because it is erroring repeatedly.\n\n' +
+    reason + '\n\n' +
+    'Nothing has been deleted, and anything already quarantined is still in the\n' +
+    'ScamShield/Quarantine label. Scanning and logging continue.\n\n' +
+    'To re-enable after you have fixed the cause: Apps Script editor ->\n' +
+    'Project Settings -> Script Properties -> delete "' +
+    PROP.ENFORCE_DISABLED_BY_KILL_SWITCH + '".\n\n' +
+    'Recent errors:\n' +
+    recent.slice(-5).map(function (e) { return '- [' + e.where + '] ' + e.error; }).join('\n'));
+  return true;
+}
+
+/**
+ * Clears the kill switch after you have fixed whatever tripped it.
+ */
+function clearKillSwitch() {
+  PropertiesService.getScriptProperties().deleteProperty(PROP.ENFORCE_DISABLED_BY_KILL_SWITCH);
+  Logger.log('Kill switch cleared. Enforcement is now ' +
+             (isEnforcementActive_() ? 'ACTIVE' : 'still OFF because CONFIG.ENFORCE is false') + '.');
 }

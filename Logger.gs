@@ -623,3 +623,29 @@ function getDecisionsSince_(sinceMs) {
   }
   return out;
 }
+
+/**
+ * Appends an address to the Config-Allowlist tab, if it is not already there.
+ * Used by restoreMessage() so undoing a false positive also prevents a repeat.
+ *
+ * @param {string} entry An email address or domain.
+ * @param {string=} note Free text for the Notes column.
+ * @return {boolean} true if it was added, false if already present.
+ */
+function addToAllowlist_(entry, note) {
+  var normalized = String(entry || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.charAt(0) === '@') normalized = normalized.slice(1);
+
+  var list = getAllowlist_();
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] === normalized) return false;
+  }
+
+  getLogSpreadsheet_().getSheetByName(TAB.ALLOWLIST)
+    .appendRow([sanitizeForSheet_(normalized), sanitizeForSheet_(note || '')]);
+
+  // Keep the run cache consistent so a later call in the same run sees it.
+  list.push(normalized);
+  return true;
+}
