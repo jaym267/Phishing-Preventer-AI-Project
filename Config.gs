@@ -53,8 +53,25 @@ var CONFIG = {
   /** Stage 4 gate: only a `scam` verdict at or above this confidence quarantines. */
   CONFIDENCE_THRESHOLD: 0.85,
 
-  /** Stage 2. Exact Anthropic model ID — no date suffix on this one. */
-  MODEL: 'claude-sonnet-4-6',
+  /**
+   * Stage 2. Exact Anthropic model ID — these strings are complete as written;
+   * never append a date suffix.
+   *
+   * Haiku 4.5 is the cheapest current model ($1/$5 per million input/output
+   * tokens) and this is a high-frequency classifier — at ~50 emails/day it is
+   * roughly $3/month against ~$9 for Sonnet 4.6 or ~$15 for Opus 5. Stage 3's
+   * observe-only review is exactly the mechanism for finding out whether the
+   * accuracy holds; changing this is a one-line edit if it does not.
+   */
+  MODEL: 'claude-haiku-4-5',
+
+  /**
+   * Ceiling on the classifier's reply. A verdict is a few dozen tokens, so this
+   * is generous headroom, not a cost driver — and running out mid-JSON would
+   * produce an unparseable response (which we correctly treat as an error, but
+   * we would rather it not happen).
+   */
+  MAX_TOKENS: 1024,
 
   // ----------------------------------------------------------- polling window
 
@@ -282,4 +299,38 @@ function getDigestRecipient_() {
   }
   var stored = PropertiesService.getScriptProperties().getProperty(PROP.DIGEST_RECIPIENT);
   return stored ? stored.trim() : '';
+}
+
+// ---------------------------------------------------------------------------
+// Run deadline — shared between Main.gs (which owns the clock) and
+// Classifier.gs (which must not sleep past it).
+// ---------------------------------------------------------------------------
+
+/** Epoch ms after which no new blocking work should start. 0 = not set. */
+var RUN_DEADLINE_MS_ = 0;
+
+/**
+ * Records when the current run must stop starting blocking work.
+ *
+ * Without this, the classifier's retry backoff is blind: two 429s cost 10
+ * seconds of Utilities.sleep plus up to three 60-second fetches, which can
+ * overrun the 6-minute hard kill even though scanInbox() checked its budget
+ * before the message started. Main.gs sets this once per run.
+ *
+ * @param {number} startMs Date.now() at the top of the run.
+ */
+function setRunDeadline_(startMs) {
+  RUN_DEADLINE_MS_ = startMs + CONFIG.TIME_BUDGET_MS;
+}
+
+/**
+ * Is there at least `needMs` left before the run deadline?
+ * Returns true when no deadline is set (e.g. testClassifier runs standalone).
+ *
+ * @param {number} needMs
+ * @return {boolean}
+ */
+function hasRunTimeLeft_(needMs) {
+  if (!RUN_DEADLINE_MS_) return true;
+  return Date.now() + needMs < RUN_DEADLINE_MS_;
 }

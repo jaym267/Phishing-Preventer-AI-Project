@@ -110,15 +110,19 @@ function checkSetup() {
 /**
  * Reads recent inbox mail and writes one Decisions row per new message.
  *
- * Observe-only. No message is labeled, archived, marked read, or deleted.
- * In Stage 1 every logged verdict is NOT_CLASSIFIED (or ALLOWLISTED); Stage 2
- * replaces that with a real verdict at a single call site.
+ * Observe-only while CONFIG.ENFORCE is false: no message is labeled, archived,
+ * marked read, or deleted. Stage 2 fills in real verdicts from Classifier.gs;
+ * Stage 4 adds the enforcement branch at the marked seam.
  */
 function scanInbox() {
   var startMs = Date.now();
+  // Share the deadline with Classifier.gs so its retry backoff cannot sleep us
+  // past the 6-minute hard kill.
+  setRunDeadline_(startMs);
   var stats = {
     threads: 0, candidates: 0, logged: 0,
-    skippedProcessed: 0, skippedAllowlist: 0, errors: 0, bailReason: ''
+    skippedProcessed: 0, skippedAllowlist: 0, errors: 0,
+    classifyErrors: 0, scam: 0, suspicious: 0, safe: 0, bailReason: ''
   };
 
   // Take the lock with ZERO wait. A second, overlapping run has nothing useful
@@ -211,8 +215,33 @@ function scanInbox() {
           continue;
         }
 
-        // STAGE 2 SEAM: this is the single call site where a real classifier
-        // verdict replaces the placeholder.
+        // ---- Stage 2: classify -------------------------------------------
+        // Every failure path in Classifier.gs returns verdict 'error'.
+        var result = classifyMessage_(payload);
+
+        if (result.verdict === VERDICT.ERROR) {
+          // Hard rule 4: no action, and an error row in the log.
+          //
+          // Note what we deliberately do NOT do here: write a Decisions row.
+          // Dedupe reads the Decisions tab, so leaving this message out of it
+          // means the next run tries again. A transient API outage therefore
+          // costs a retry rather than permanently skipping the message — which
+          // matters, because a message we never classified is a message this
+          // tool did not protect against. The retry is self-limiting: once the
+          // message falls outside POLL_WINDOW_MINUTES it stops being a
+          // candidate, so a permanently-failing message is retried about twice
+          // and then dropped, never forever.
+          stats.classifyErrors++;
+          logError_('classify', new Error(result.error), id);
+          continue;
+        }
+
+        if (result.verdict === VERDICT.SCAM) stats.scam++;
+        else if (result.verdict === VERDICT.SUSPICIOUS) stats.suspicious++;
+        else stats.safe++;
+
+        // STAGE 4 SEAM: enforcement (label + archive + mark read) hooks in
+        // here, gated on CONFIG.ENFORCE. Until then the action is always none.
         logDecision_({
           messageId: id,
           messageDate: payload.messageDate,
@@ -221,9 +250,9 @@ function scanInbox() {
           subject: payload.subject,
           bodyPreview: payload.bodyPreview,
           urlCount: payload.urlCount,
-          verdict: VERDICT.NOT_CLASSIFIED,
-          confidence: '',
-          reasons: '',
+          verdict: result.verdict,
+          confidence: result.confidence,
+          reasons: result.reasons,
           actionTaken: 'none (observe-only)',
           error: ''
         });
@@ -245,6 +274,10 @@ function scanInbox() {
       ' logged=' + stats.logged +
       ' skippedProcessed=' + stats.skippedProcessed +
       ' skippedAllowlist=' + stats.skippedAllowlist +
+      ' scam=' + stats.scam +
+      ' suspicious=' + stats.suspicious +
+      ' safe=' + stats.safe +
+      ' classifyErrors=' + stats.classifyErrors +
       ' errors=' + stats.errors +
       ' elapsedMs=' + (Date.now() - startMs) +
       (stats.bailReason ? ' bail=' + stats.bailReason : '')
