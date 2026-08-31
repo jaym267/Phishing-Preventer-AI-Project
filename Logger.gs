@@ -553,3 +553,73 @@ function markProcessedInMemory_(messageId) {
   if (!messageId) return;
   loadProcessedIds_()[messageId] = true;
 }
+
+/**
+ * Reads Errors rows written at or after `sinceMs`.
+ *
+ * Used by the daily self-test (did anything break today?) and by the Stage 4
+ * kill switch (are we failing so often that enforcement should stop?).
+ *
+ * Scans from the END backwards and stops at the first row older than the
+ * cutoff, because the Errors tab is append-only and chronological. That keeps
+ * this O(matching rows) rather than O(whole log).
+ *
+ * @param {number} sinceMs
+ * @return {Array<{when: Date, where: string, messageId: string, error: string}>}
+ *         Oldest first.
+ */
+function getErrorsSince_(sinceMs) {
+  var sheet = getLogSpreadsheet_().getSheetByName(TAB.ERRORS);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+
+  // Cap how far back we are willing to look, so a huge Errors tab cannot make
+  // a trigger run long.
+  var earliest = Math.max(2, lastRow - CONFIG.DEDUPE_LOOKBACK_ROWS + 1);
+  var values = sheet.getRange(earliest, 1, lastRow - earliest + 1, ERROR_HEADERS.length).getValues();
+
+  var out = [];
+  for (var i = values.length - 1; i >= 0; i--) {
+    var when = values[i][0];
+    var t = (when instanceof Date) ? when.getTime() : Date.parse(when);
+    if (!t || isNaN(t)) continue;
+    if (t < sinceMs) break;
+    out.unshift({
+      when: new Date(t),
+      where: unmarkCell_(values[i][1]),
+      messageId: unmarkCell_(values[i][2]),
+      error: unmarkCell_(values[i][3])
+    });
+  }
+  return out;
+}
+
+/**
+ * Reads Decisions rows whose Message Date is at or after `sinceMs`.
+ * Used by the Stage 5 weekly digest and the Stage 6 summary.
+ *
+ * @param {number} sinceMs
+ * @return {Object[]} Row objects keyed by DECISION_HEADERS name, oldest first.
+ */
+function getDecisionsSince_(sinceMs) {
+  var sheet = getLogSpreadsheet_().getSheetByName(TAB.DECISIONS);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+
+  var values = sheet.getRange(2, 1, lastRow - 1, DECISION_HEADERS.length).getValues();
+  var out = [];
+  for (var i = 0; i < values.length; i++) {
+    var when = values[i][DECISION_HEADERS.indexOf('Message Date')];
+    var t = (when instanceof Date) ? when.getTime() : Date.parse(when);
+    if (!t || isNaN(t) || t < sinceMs) continue;
+
+    var row = {};
+    for (var c = 0; c < DECISION_HEADERS.length; c++) {
+      var v = values[i][c];
+      row[DECISION_HEADERS[c]] = (v instanceof Date) ? v : unmarkCell_(v);
+    }
+    row._messageDate = new Date(t);
+    out.push(row);
+  }
+  return out;
+}

@@ -14,7 +14,8 @@ var PROP = {
   API_KEY: 'ANTHROPIC_API_KEY',
   LOG_SHEET_ID: 'LOG_SHEET_ID',
   ENFORCE_DISABLED_BY_KILL_SWITCH: 'ENFORCE_DISABLED_BY_KILL_SWITCH',
-  DIGEST_RECIPIENT: 'DIGEST_RECIPIENT'
+  DIGEST_RECIPIENT: 'DIGEST_RECIPIENT',
+  OWNER_EMAIL: 'OWNER_EMAIL'
 };
 
 /**
@@ -214,6 +215,28 @@ var CONFIG = {
    */
   ALLOWLIST_MATCH_SUBDOMAINS: false,
 
+  // ------------------------------------------------------------------ triggers
+
+  /**
+   * Minutes between scanInbox runs. Apps Script only allows 1, 5, 10, 15 or 30
+   * for everyMinutes() — arbitrary intervals are not an option. 10 pairs with
+   * POLL_WINDOW_MINUTES: 20 to give a 2x overlap.
+   */
+  TRIGGER_MINUTES: 10,
+
+  /** Hour (0-23, script timezone) for the daily error self-test. */
+  SELF_TEST_HOUR: 7,
+
+  /** Day and hour for the Stage 5 weekly family digest. */
+  DIGEST_WEEKDAY: 'SUNDAY',
+  DIGEST_HOUR: 18,
+
+  // -------------------------------------------------------------- kill switch
+
+  /** More than this many Errors rows within KILL_SWITCH_WINDOW_MIN disables enforcement. */
+  KILL_SWITCH_ERROR_LIMIT: 5,
+  KILL_SWITCH_WINDOW_MIN: 60,
+
   // -------------------------------------------------------------------- stage 5
 
   /**
@@ -224,7 +247,18 @@ var CONFIG = {
    * Properties, same as the API key. This key stays as an override for local
    * testing. Unused until Stage 5.
    */
-  DIGEST_RECIPIENT: ''
+  DIGEST_RECIPIENT: '',
+
+  /**
+   * Where operational alerts go — the daily self-test and the kill-switch
+   * warning. This is YOU (the person maintaining the script), not the family
+   * member who gets the weekly digest.
+   *
+   * '' means read it from the OWNER_EMAIL Script Property. We do not use
+   * Session.getActiveUser().getEmail() to discover it, because that call would
+   * add the userinfo.email OAuth scope and force everyone to re-consent.
+   */
+  OWNER_EMAIL: ''
 };
 
 /**
@@ -333,4 +367,35 @@ function setRunDeadline_(startMs) {
 function hasRunTimeLeft_(needMs) {
   if (!RUN_DEADLINE_MS_) return true;
   return Date.now() + needMs < RUN_DEADLINE_MS_;
+}
+
+/**
+ * Resolves the operator alert address: CONFIG override, else Script Property,
+ * else ''. Callers must handle '' — we would rather skip an alert than throw
+ * inside a trigger.
+ *
+ * @return {string}
+ */
+function getOwnerEmail_() {
+  if (CONFIG.OWNER_EMAIL && CONFIG.OWNER_EMAIL.trim()) return CONFIG.OWNER_EMAIL.trim();
+  var stored = PropertiesService.getScriptProperties().getProperty(PROP.OWNER_EMAIL);
+  return stored ? stored.trim() : '';
+}
+
+/**
+ * Is enforcement actually live right now?
+ *
+ * Two independent switches, and BOTH must allow it:
+ *   1. CONFIG.ENFORCE — the deliberate human decision, in source.
+ *   2. The kill switch — a Script Property set automatically when the error
+ *      rate spikes. It lives in Script Properties rather than in code
+ *      specifically so that a `clasp push` cannot silently undo it.
+ *
+ * @return {boolean}
+ */
+function isEnforcementActive_() {
+  if (!CONFIG.ENFORCE) return false;
+  var tripped = PropertiesService.getScriptProperties()
+    .getProperty(PROP.ENFORCE_DISABLED_BY_KILL_SWITCH);
+  return !tripped;
 }

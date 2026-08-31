@@ -608,3 +608,177 @@ function truncate_(s, n) {
   var str = String(s || '');
   return str.length > n ? str.slice(0, n) : str;
 }
+
+// ---------------------------------------------------------------------------
+// Stage 3 — triggers
+// ---------------------------------------------------------------------------
+
+/**
+ * Run ONCE from the "Run" dropdown to start the script running on its own.
+ *
+ * Apps Script note — a "time-driven trigger" is Google's cron. It belongs to
+ * the script project and to the user who created it, and it keeps running even
+ * with the editor closed. Two limits shape what we can ask for:
+ *
+ *   1. everyMinutes() accepts only 1, 5, 10, 15 or 30. Arbitrary intervals are
+ *      not available, which is why CONFIG.TRIGGER_MINUTES is 10 and not 7.
+ *   2. Triggers fire within a WINDOW around the scheduled time, not to the
+ *      second. That is why the search window is twice the interval — a late run
+ *      still sees everything the previous one might have missed.
+ *
+ * Also worth knowing: total trigger runtime is capped per day (roughly 90
+ * minutes on a consumer @gmail.com account). At 144 runs a day that is about 37
+ * seconds each, which is the real reason MAX_MESSAGES_PER_RUN is 10 rather than
+ * "drain the inbox".
+ *
+ * Safe to run twice — existing triggers for the same function are left alone.
+ */
+function installTriggers() {
+  var wanted = [
+    { fn: 'scanInbox', describe: 'every ' + CONFIG.TRIGGER_MINUTES + ' minutes' },
+    { fn: 'dailySelfTest', describe: 'daily around ' + CONFIG.SELF_TEST_HOUR + ':00' },
+    { fn: 'sendWeeklyDigest', describe: CONFIG.DIGEST_WEEKDAY + ' around ' + CONFIG.DIGEST_HOUR + ':00' }
+  ];
+
+  var existing = {};
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    existing[triggers[i].getHandlerFunction()] = true;
+  }
+
+  for (var w = 0; w < wanted.length; w++) {
+    var fn = wanted[w].fn;
+
+    // Apps Script will happily create a trigger for a function that does not
+    // exist; it just fails every time it fires. Skip anything not yet defined
+    // (sendWeeklyDigest arrives in Stage 5).
+    if (typeof this[fn] !== 'function') {
+      Logger.log('SKIP  ' + fn + ' — not implemented yet in this version.');
+      continue;
+    }
+
+    if (existing[fn]) {
+      Logger.log('SKIP  ' + fn + ' — a trigger already exists. Not creating a duplicate.');
+      continue;
+    }
+    if (fn === 'scanInbox') {
+      ScriptApp.newTrigger(fn).timeBased().everyMinutes(CONFIG.TRIGGER_MINUTES).create();
+    } else if (fn === 'dailySelfTest') {
+      ScriptApp.newTrigger(fn).timeBased().atHour(CONFIG.SELF_TEST_HOUR).everyDays(1).create();
+    } else {
+      ScriptApp.newTrigger(fn).timeBased()
+        .onWeekDay(ScriptApp.WeekDay[CONFIG.DIGEST_WEEKDAY])
+        .atHour(CONFIG.DIGEST_HOUR).create();
+    }
+    Logger.log('OK    ' + fn + ' — ' + wanted[w].describe);
+  }
+
+  Logger.log('Triggers now installed: ' + ScriptApp.getProjectTriggers().length);
+  Logger.log('Enforcement is ' + (isEnforcementActive_() ? 'ACTIVE' : 'OFF (observe-only)') + '.');
+}
+
+/**
+ * Removes every trigger this project owns. Use before uninstalling, or to stop
+ * the script cleanly without deleting it.
+ */
+function removeTriggers() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    Logger.log('Removing trigger for ' + triggers[i].getHandlerFunction());
+    ScriptApp.deleteTrigger(triggers[i]);
+  }
+  Logger.log('Removed ' + triggers.length + ' trigger(s). The script will no longer run on its own.');
+}
+
+/**
+ * Lists what is currently scheduled. Read-only; handy when something is not
+ * running and you want to know whether a trigger actually exists.
+ */
+function listTriggers() {
+  var triggers = ScriptApp.getProjectTriggers();
+  if (!triggers.length) {
+    Logger.log('No triggers installed. Run installTriggers() to start.');
+    return;
+  }
+  for (var i = 0; i < triggers.length; i++) {
+    Logger.log((i + 1) + '. ' + triggers[i].getHandlerFunction() +
+               ' (' + triggers[i].getEventType() + ')');
+  }
+}
+
+/**
+ * Daily health check. Emails you only if something actually went wrong, so a
+ * message from this function always means "look at me".
+ *
+ * Reports: how many errors were logged in the last 24 hours, a sample of them,
+ * and whether the kill switch has disabled enforcement.
+ */
+function dailySelfTest() {
+  var since = Date.now() - (24 * 60 * 60 * 1000);
+
+  var errors;
+  try {
+    errors = getErrorsSince_(since);
+  } catch (err) {
+    // If we cannot even read the log, that is itself worth an alert.
+    Logger.log('dailySelfTest could not read the log: ' + err.message);
+    notifyOwner_('ScamShield: cannot read the log sheet',
+      'The daily self-test could not open the decision log.\n\n' + err.message);
+    return;
+  }
+
+  var killed = PropertiesService.getScriptProperties()
+    .getProperty(PROP.ENFORCE_DISABLED_BY_KILL_SWITCH);
+
+  if (!errors.length && !killed) {
+    Logger.log('dailySelfTest: healthy — 0 errors in the last 24h. No email sent.');
+    return;
+  }
+
+  var lines = [];
+  if (killed) {
+    lines.push('ENFORCEMENT IS DISABLED. The kill switch tripped: ' + killed);
+    lines.push('Nothing is being quarantined until you clear the ' +
+               PROP.ENFORCE_DISABLED_BY_KILL_SWITCH + ' script property.');
+    lines.push('');
+  }
+  lines.push(errors.length + ' error(s) logged in the last 24 hours.');
+  lines.push('');
+  var sample = errors.slice(-10);
+  for (var i = 0; i < sample.length; i++) {
+    lines.push('- [' + sample[i].where + '] ' + sample[i].error);
+  }
+  if (errors.length > sample.length) {
+    lines.push('...and ' + (errors.length - sample.length) + ' more. See the Errors tab.');
+  }
+  lines.push('');
+  lines.push('Log: ' + getLogSpreadsheet_().getUrl());
+
+  Logger.log('dailySelfTest: ' + errors.length + ' error(s), killSwitch=' + (killed || 'no'));
+  notifyOwner_('ScamShield: ' + errors.length + ' error(s) in the last 24h', lines.join('\n'));
+}
+
+/**
+ * Sends an operational alert to the script owner.
+ *
+ * Never throws: this is called from triggers and from the kill switch, and an
+ * alert that fails must not take the run down with it. Silently does nothing if
+ * no owner address is configured, after saying so in the log.
+ *
+ * @param {string} subject
+ * @param {string} body Plain text.
+ */
+function notifyOwner_(subject, body) {
+  var to = getOwnerEmail_();
+  if (!to) {
+    Logger.log('notifyOwner_: no OWNER_EMAIL script property set, so no alert was sent.');
+    Logger.log('  Would have sent: ' + subject);
+    return;
+  }
+  try {
+    MailApp.sendEmail(to, subject, body);
+    Logger.log('notifyOwner_: alert sent to ' + to);
+  } catch (err) {
+    Logger.log('notifyOwner_: could not send mail — ' + err.message);
+  }
+}
