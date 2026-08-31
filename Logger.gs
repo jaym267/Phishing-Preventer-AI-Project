@@ -18,7 +18,8 @@
 var TAB = {
   DECISIONS: 'Decisions',
   ALLOWLIST: 'Config-Allowlist',
-  ERRORS: 'Errors'
+  ERRORS: 'Errors',
+  SUMMARY: 'Summary'
 };
 
 /**
@@ -174,6 +175,7 @@ function getLogSpreadsheet_() {
   ensureTab_(ss, TAB.DECISIONS, DECISION_HEADERS);
   ensureTab_(ss, TAB.ALLOWLIST, ALLOWLIST_HEADERS);
   ensureTab_(ss, TAB.ERRORS, ERROR_HEADERS);
+  ensureSummaryTab_(ss);
 
   SS_CACHE_ = ss;
   return ss;
@@ -648,4 +650,115 @@ function addToAllowlist_(entry, note) {
   // Keep the run cache consistent so a later call in the same run sees it.
   list.push(normalized);
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Stage 6 — accuracy summary
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the Summary tab, which is FORMULAS rather than a script.
+ *
+ * That is deliberate: a formula recalculates the moment you type WRONG next to
+ * a row, so reviewing accuracy is a live activity rather than something you
+ * have to remember to re-run. It also means the numbers cannot drift out of
+ * date between runs.
+ *
+ * Idempotent — safe to call on every run. Only writes when the tab is missing.
+ *
+ * @param {Spreadsheet} ss
+ * @return {Sheet}
+ */
+function ensureSummaryTab_(ss) {
+  var sheet = ss.getSheetByName(TAB.SUMMARY);
+  if (sheet) return sheet;
+
+  sheet = ss.insertSheet(TAB.SUMMARY);
+
+  // Resolve columns by header NAME so inserting a Decisions column later does
+  // not silently point every formula at the wrong data.
+  var vCol = columnLetter_(decisionColumn_('Verdict'));
+  var aCol = columnLetter_(decisionColumn_('Action Taken'));
+  var rCol = columnLetter_(decisionColumn_('Review'));
+  var idCol = columnLetter_(decisionColumn_('Message ID'));
+  var D = "'" + TAB.DECISIONS + "'!";
+
+  var rows = [
+    ['ScamShield — accuracy summary', '', ''],
+    ['', '', ''],
+    ['Type WRONG in the Review column of any Decisions row you disagree with.', '', ''],
+    ['Everything below updates by itself as soon as you do.', '', ''],
+    ['', '', ''],
+    ['HOW MUCH IT HAS SEEN', '', ''],
+    ['Messages logged', '=COUNTA(' + D + idCol + '2:' + idCol + ')', 'Every row in Decisions.'],
+    ['', '', ''],
+    ['WHAT IT DECIDED', '', ''],
+    ['Scam', '=COUNTIF(' + D + vCol + ':' + vCol + ',"scam")', ''],
+    ['Suspicious', '=COUNTIF(' + D + vCol + ':' + vCol + ',"suspicious")', ''],
+    ['Safe', '=COUNTIF(' + D + vCol + ':' + vCol + ',"safe")', ''],
+    ['Skipped (allowlisted)', '=COUNTIF(' + D + vCol + ':' + vCol + ',"ALLOWLISTED")', 'Never scanned, by design.'],
+    ['', '', ''],
+    ['WHAT IT ACTUALLY DID', '', ''],
+    ['Quarantined', '=COUNTIF(' + D + aCol + ':' + aCol + ',"QUARANTINED*")', 'Labelled and archived.'],
+    ['Flagged only', '=COUNTIF(' + D + aCol + ':' + aCol + ',"FLAGGED*")', 'Labelled, left in the inbox.'],
+    ['Restored by hand', '=COUNTIF(' + D + aCol + ':' + aCol + ',"RESTORED*")', 'You undid these.'],
+    ['', '', ''],
+    ['WHERE IT WAS WRONG', '', ''],
+    ['Marked WRONG by you', '=COUNTIF(' + D + rCol + ':' + rCol + ',"WRONG*")', 'Any verdict you disagreed with.'],
+    ['False positives (quarantined a real email)',
+     '=COUNTIFS(' + D + aCol + ':' + aCol + ',"QUARANTINED*",' + D + rCol + ':' + rCol + ',"WRONG*")',
+     'The mistake that matters most.'],
+    ['False negatives (called it safe, but it was a scam)',
+     '=COUNTIFS(' + D + vCol + ':' + vCol + ',"safe",' + D + rCol + ':' + rCol + ',"WRONG*")',
+     'A scam that got through.'],
+    ['', '', ''],
+    ['HOW GOOD IT IS', '', ''],
+    ['Precision on quarantine',
+     '=IF(B16=0,"no data yet",TEXT((B16-B22)/B16,"0.0%"))',
+     'Of everything quarantined, how much really was a scam. This is the number to watch.'],
+    ['Recall on scam (of what you reviewed)',
+     '=IF((B16+B23)=0,"no data yet",TEXT(B16/(B16+B23),"0.0%"))',
+     'Of the scams you know about, how many it caught. Only meaningful once you have marked some WRONG.']
+  ];
+
+  sheet.getRange(1, 1, rows.length, 3).setValues(rows);
+  sheet.getRange(1, 1).setFontWeight('bold').setFontSize(14);
+  var headings = [6, 9, 15, 20, 25];
+  for (var h = 0; h < headings.length; h++) {
+    sheet.getRange(headings[h], 1).setFontWeight('bold');
+  }
+  sheet.setColumnWidth(1, 320);
+  sheet.setColumnWidth(2, 110);
+  sheet.setColumnWidth(3, 420);
+  return sheet;
+}
+
+/**
+ * Deletes and rebuilds the Summary tab. Use after changing the Decisions
+ * columns, or if the formulas get edited by accident.
+ */
+function rebuildSummaryTab() {
+  var ss = getLogSpreadsheet_();
+  var existing = ss.getSheetByName(TAB.SUMMARY);
+  if (existing) ss.deleteSheet(existing);
+  ensureSummaryTab_(ss);
+  Logger.log('Summary tab rebuilt: ' + ss.getUrl());
+}
+
+/**
+ * 1-based column index to an A1 letter. Handles past column Z, which we do not
+ * need today at 14 columns, but which costs three lines to get right.
+ *
+ * @param {number} index
+ * @return {string}
+ */
+function columnLetter_(index) {
+  var s = '';
+  var n = index;
+  while (n > 0) {
+    var rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
 }

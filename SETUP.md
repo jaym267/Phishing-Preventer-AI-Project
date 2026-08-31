@@ -79,7 +79,8 @@ the consent screen shows exactly this list and nothing more.
 | `gmail.modify` | Read messages, add/remove labels, archive, mark read — **this scope cannot delete mail**, which is exactly the ceiling hard rule 1 wants. |
 | `spreadsheets` | Create and write the decision log / allowlist / errors spreadsheet. |
 | `script.external_request` | `UrlFetchApp` — required to call `api.anthropic.com`. |
-| `script.scriptapp` | Let the script install and remove its own time-driven triggers (`installTriggers()` in Stage 3). |
+| `script.scriptapp` | Let the script install and remove its own time-driven triggers (`installTriggers()`). |
+| `script.send_mail` | Send the weekly family digest and the error/kill-switch alerts. |
 
 Why `gmail.modify` and not `gmail.readonly`: readonly cannot apply labels or
 archive, so Stage 4 would be impossible. Why not `https://mail.google.com/`:
@@ -87,13 +88,10 @@ that is full access **including delete**, and we never want the credential to
 be capable of the thing hard rule 1 forbids. `gmail.modify` is the tightest
 scope that still permits quarantine.
 
-### Scopes we will need later (not added yet)
-
-- **`script.send_mail`** — Stage 4's kill-switch alert and Stage 5's weekly
-  family digest both send email. This is not in the spec's Stage 0 scope list,
-  so I have not added it. Say the word and I will add it at Stage 4; note that
-  **changing the scope list forces a re-authorization prompt**, so it is worth
-  deciding before you install this on someone else's account.
+`script.send_mail` was added at Stage 4 — the kill-switch alert and the weekly
+family digest both send email. Note that **changing the scope list forces a
+re-authorization prompt**, which is why it was added in one go rather than
+twice.
 
 Every time `appsscript.json` gains a scope, the next run shows the Google
 consent screen again. That is normal, not a bug.
@@ -318,10 +316,10 @@ Worth knowing now, because they explain choices in later stages:
 |---|---|---|
 | `appsscript.json` | Manifest: runtime, timezone, OAuth scopes | Stage 0 ✅ |
 | `Config.gs` | `CONFIG` object, secrets access (`getApiKey_`) | Stage 1 ✅ |
-| `Main.gs` | Entry points: `checkSetup()`, `scanInbox()`, payload extraction | Stage 1 ✅ |
-| `Logger.gs` | Google Sheet audit trail, allowlist, dedupe, `initLogSheet()` | Stage 1 ✅ |
-| `Classifier.gs` | Anthropic API call + verdict parsing | Stage 2 |
-| `Digest.gs` | Weekly family summary email | Stage 5 |
+| `Main.gs` | Entry points, payload extraction, triggers, enforcement, undo | Stages 1-4 ✅ |
+| `Logger.gs` | Google Sheet audit trail, allowlist, dedupe, accuracy summary | Stages 1, 6 ✅ |
+| `Classifier.gs` | Anthropic API call + verdict parsing | Stage 2 ✅ |
+| `Digest.gs` | Weekly family summary email | Stage 5 ✅ |
 
 `timeZone` in the manifest is set to `America/New_York`. Change it if that is
 not yours — it controls when the daily/weekly triggers actually fire.
