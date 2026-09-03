@@ -211,6 +211,14 @@ function interpretResponse_(rawBody) {
     return classifierError_('API response was not JSON');
   }
 
+  // JSON.parse('null'), '[]' or '"text"' all succeed and would then throw a
+  // TypeError below. This file's contract is that EVERY path returns an error
+  // verdict rather than throwing.
+  if (!parsed || typeof parsed !== 'object' ||
+      Object.prototype.toString.call(parsed) === '[object Array]') {
+    return classifierError_('API response was not a JSON object');
+  }
+
   // A safety refusal returns HTTP 200 with stop_reason 'refusal', and the docs
   // are explicit that the output may NOT match the schema in that case. Guard
   // before touching content.

@@ -144,7 +144,7 @@ meaningful once you have marked some rows `WRONG`.
 
 | You want to | Do this |
 |---|---|
-| Get one message back | Copy its Message ID from the Decisions tab, run `restoreMessage("<id>")`. It returns to the inbox and the sender is allowlisted so it cannot recur. |
+| Get one message back | Copy its Message ID from the Decisions tab. Project Settings → Script Properties → add `RESTORE_MESSAGE_ID` = that ID. Run `restoreMessage`. It returns to the inbox, the sender is allowlisted so it cannot recur, and the property is cleared. (The Run dropdown cannot pass arguments, hence the property.) |
 | Stop quarantining, keep watching | Set `ENFORCE: false` in `Config.gs`, push. |
 | Stop it running entirely | Run `removeTriggers()`. |
 | Find everything it has hidden | Open the `ScamShield/Quarantine` label in Gmail. Nothing was deleted; it is all there. |
@@ -193,6 +193,22 @@ Worth being honest about:
   Drive scope it deliberately does not request. Share it by hand if you want to.
 
 ---
+
+## Confirm on the first live run
+
+This code was tested against simulated Google services, and Google's reference
+docs could not be reached from the build environment. Each item below is
+handled defensively either way, but confirm it once on a real run and tick it:
+
+- [ ] `initLogSheet` creates the sheet with only the `spreadsheets` scope (no
+      Drive consent prompt appears).
+- [ ] In the Decisions tab, the `Sender` cell shows the address **without** a
+      leading apostrophe. (If one shows, the text-marker is being stored
+      literally; dedupe and injection defense still work, but tell me.)
+- [ ] A message with no Reply-To header logs a blank `Reply-To` cell.
+- [ ] `installTriggers` logs `OK` for all three handlers, not `SKIP`.
+- [ ] Running `installTriggers` a second time creates no duplicates.
+- [ ] `restoreMessage` works via the `RESTORE_MESSAGE_ID` property and clears it.
 
 ## Accuracy, honestly
 

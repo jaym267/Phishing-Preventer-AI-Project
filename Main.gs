@@ -10,7 +10,7 @@
  *   installTriggers()  start running on a schedule
  *   removeTriggers()   stop running on a schedule
  *   listTriggers()     show what is scheduled
- *   restoreMessage(id) undo a quarantine and allowlist the sender
+ *   restoreMessage()   undo a quarantine (ID via RESTORE_MESSAGE_ID property)
  *   clearKillSwitch()  re-enable enforcement after you have fixed a fault
  *   sendDigestNow()    send the weekly family summary now (Digest.gs)
  *
@@ -672,10 +672,17 @@ function truncate_(s, n) {
  * Safe to run twice — existing triggers for the same function are left alone.
  */
 function installTriggers() {
+  // `typeof <undeclaredIdentifier>` is 'undefined' by spec and never throws,
+  // so these checks are safe even if a handler is missing. The earlier
+  // `typeof this[fn]` form depended on sloppy-mode `this` being the global
+  // object — true today, but undocumented, and a silent no-op if it changed.
   var wanted = [
-    { fn: 'scanInbox', describe: 'every ' + CONFIG.TRIGGER_MINUTES + ' minutes' },
-    { fn: 'dailySelfTest', describe: 'daily around ' + CONFIG.SELF_TEST_HOUR + ':00' },
-    { fn: 'sendWeeklyDigest', describe: CONFIG.DIGEST_WEEKDAY + ' around ' + CONFIG.DIGEST_HOUR + ':00' }
+    { fn: 'scanInbox', exists: typeof scanInbox === 'function',
+      describe: 'every ' + CONFIG.TRIGGER_MINUTES + ' minutes' },
+    { fn: 'dailySelfTest', exists: typeof dailySelfTest === 'function',
+      describe: 'daily around ' + CONFIG.SELF_TEST_HOUR + ':00' },
+    { fn: 'sendWeeklyDigest', exists: typeof sendWeeklyDigest === 'function',
+      describe: CONFIG.DIGEST_WEEKDAY + ' around ' + CONFIG.DIGEST_HOUR + ':00' }
   ];
 
   var existing = {};
@@ -688,9 +695,8 @@ function installTriggers() {
     var fn = wanted[w].fn;
 
     // Apps Script will happily create a trigger for a function that does not
-    // exist; it just fails every time it fires. Skip anything not yet defined
-    // (sendWeeklyDigest arrives in Stage 5).
-    if (typeof this[fn] !== 'function') {
+    // exist; it just fails every time it fires. Skip anything not defined.
+    if (!wanted[w].exists) {
       Logger.log('SKIP  ' + fn + ' — not implemented yet in this version.');
       continue;
     }
@@ -940,17 +946,32 @@ function applyAction_(msg, decision) {
 }
 
 /**
- * Manual undo for a false positive. Run from the editor with the message ID
- * copied out of the Decisions sheet.
+ * Manual undo for a false positive.
  *
- * Puts the message's thread back in the inbox, removes the Quarantine label,
+ * Puts the message's thread back in the inbox, removes the ScamShield labels,
  * and adds the sender to the allowlist so it cannot happen again.
  *
- * @param {string} messageId
+ * HOW TO CALL IT. The Apps Script "Run" dropdown cannot pass arguments, so
+ * "run restoreMessage(id)" is not something the editor lets you do. Instead:
+ *   1. Copy the Message ID from the Decisions tab.
+ *   2. Project Settings -> Script Properties -> add RESTORE_MESSAGE_ID = that ID.
+ *   3. Run restoreMessage from the dropdown.
+ * The property is deleted after a successful restore, so it cannot be replayed
+ * by accident. The optional argument still works when called from code.
+ *
+ * @param {string=} messageId Optional; falls back to the Script Property.
  */
 function restoreMessage(messageId) {
+  var props = PropertiesService.getScriptProperties();
+  var fromProperty = false;
   if (!messageId) {
-    Logger.log('restoreMessage needs a Message ID — copy one from the Decisions tab.');
+    messageId = props.getProperty(PROP.RESTORE_MESSAGE_ID);
+    fromProperty = !!messageId;
+  }
+  if (!messageId) {
+    Logger.log('restoreMessage needs a Message ID.');
+    Logger.log('Copy one from the Decisions tab, then Project Settings -> Script ' +
+               'Properties -> add ' + PROP.RESTORE_MESSAGE_ID + ' = <that id>, and run again.');
     return;
   }
   var id = String(messageId).replace(/^'/, '').trim();
@@ -996,6 +1017,10 @@ function restoreMessage(messageId) {
   Logger.log(added
     ? 'Added ' + sender + ' to the allowlist — it will never be scanned again.'
     : sender + ' was already on the allowlist.');
+
+  // One-shot: clear the property so re-running the function later does not
+  // silently re-restore (and re-allowlist) the same message.
+  if (fromProperty) props.deleteProperty(PROP.RESTORE_MESSAGE_ID);
 }
 
 // ---------------------------------------------------------------------------

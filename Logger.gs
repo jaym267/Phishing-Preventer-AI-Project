@@ -352,11 +352,15 @@ function logDecision_(record) {
     sanitizeForSheet_(record.subject),            // Subject
     sanitizeForSheet_(record.bodyPreview),        // Body Preview
     (record.urlCount === undefined ? '' : record.urlCount), // URL Count
-    sanitizeForSheet_(record.verdict),            // Verdict
+    // Verdict and Action Taken are PROGRAM CONSTANTS (see VERDICT and ACTION
+    // in Config.gs), never attacker text, so they are written raw. That
+    // matters: the Summary tab's COUNTIF formulas match these cells exactly,
+    // and must not depend on how Sheets treats a leading apostrophe.
+    String(record.verdict || ''),                 // Verdict
     (record.confidence === undefined || record.confidence === null ||
       record.confidence === '' ? '' : record.confidence),   // Confidence
     sanitizeForSheet_(reasons),                   // Reasons
-    sanitizeForSheet_(record.actionTaken),        // Action Taken
+    String(record.actionTaken || ''),             // Action Taken
     sanitizeForSheet_(record.error),              // Error
     ''                                            // Review — for you to fill in
   ];
