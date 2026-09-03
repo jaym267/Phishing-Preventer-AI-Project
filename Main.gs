@@ -43,10 +43,14 @@
  *   1. The Anthropic API key exists in Script Properties (and is usable).
  *   2. The Gmail scope was actually granted (read-only probe).
  *   3. The trigger-management scope was actually granted.
- *   4. Outbound HTTPS works and the key authenticates against api.anthropic.com.
+ *   4. The send-mail scope was granted (read-only quota probe — sends nothing).
+ *   5. Outbound HTTPS works and the key authenticates against api.anthropic.com.
+ *   6. CONFIG.MODEL names a model this key can actually use.
  *
- * Step 4 calls GET /v1/models — a metadata endpoint that consumes zero model
- * tokens, so this check is free to run as often as you like.
+ * Steps 5 and 6 call GET /v1/models — metadata endpoints that consume zero
+ * model tokens, so this check is free to run as often as you like. Step 6 is
+ * here so a mistyped model ID fails loudly at setup instead of silently as an
+ * 'error' verdict on every message at runtime.
  *
  * Nothing here writes to your mailbox, and the key is never logged in full.
  */
@@ -57,9 +61,9 @@ function checkSetup() {
   var key;
   try {
     key = getApiKey_();
-    Logger.log('[1/4] API key found in Script Properties: ' + maskSecret_(key));
+    Logger.log('[1/6] API key found in Script Properties: ' + maskSecret_(key));
   } catch (err) {
-    Logger.log('[1/4] FAIL — ' + err.message);
+    Logger.log('[1/6] FAIL — ' + err.message);
     Logger.log('setup INCOMPLETE');
     return;
   }
@@ -67,22 +71,33 @@ function checkSetup() {
   // 2. Gmail scope. getInboxUnreadCount() reads; it changes nothing.
   try {
     var unread = GmailApp.getInboxUnreadCount();
-    Logger.log('[2/4] Gmail scope OK — ' + unread + ' unread message(s) in inbox.');
+    Logger.log('[2/6] Gmail scope OK — ' + unread + ' unread message(s) in inbox.');
   } catch (err) {
     problems.push('Gmail scope: ' + err.message);
-    Logger.log('[2/4] FAIL — ' + err.message);
+    Logger.log('[2/6] FAIL — ' + err.message);
   }
 
   // 3. Trigger scope.
   try {
     var triggerCount = ScriptApp.getProjectTriggers().length;
-    Logger.log('[3/4] Trigger scope OK — ' + triggerCount + ' trigger(s) installed.');
+    Logger.log('[3/6] Trigger scope OK — ' + triggerCount + ' trigger(s) installed.');
   } catch (err) {
     problems.push('Trigger scope: ' + err.message);
-    Logger.log('[3/4] FAIL — ' + err.message);
+    Logger.log('[3/6] FAIL — ' + err.message);
   }
 
-  // 4. Outbound HTTPS + key authenticates. muteHttpExceptions lets us read the
+  // 4. Send-mail scope. getRemainingDailyQuota() reads a counter; it sends
+  //    nothing. If the scope is missing this throws, which is exactly what we
+  //    want to learn now rather than when the kill switch tries to alert you.
+  try {
+    var quota = MailApp.getRemainingDailyQuota();
+    Logger.log('[4/6] Send-mail scope OK — ' + quota + ' email(s) left in today\'s quota.');
+  } catch (err) {
+    problems.push('Send-mail scope: ' + err.message);
+    Logger.log('[4/6] FAIL — ' + err.message);
+  }
+
+  // 5. Outbound HTTPS + key authenticates. muteHttpExceptions lets us read the
   //    error body instead of getting an opaque thrown exception on 4xx/5xx.
   try {
     var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/models?limit=1', {
@@ -95,17 +110,41 @@ function checkSetup() {
     });
     var code = res.getResponseCode();
     if (code === 200) {
-      Logger.log('[4/4] Anthropic API reachable and key accepted (HTTP 200).');
+      Logger.log('[5/6] Anthropic API reachable and key accepted (HTTP 200).');
     } else if (code === 401) {
       problems.push('Anthropic API returned 401 — the stored key is invalid or revoked.');
-      Logger.log('[4/4] FAIL — HTTP 401. Replace ANTHROPIC_API_KEY in Script Properties.');
+      Logger.log('[5/6] FAIL — HTTP 401. Replace ANTHROPIC_API_KEY in Script Properties.');
     } else {
       problems.push('Anthropic API returned HTTP ' + code + '.');
-      Logger.log('[4/4] FAIL — HTTP ' + code + ': ' + res.getContentText().slice(0, 300));
+      Logger.log('[5/6] FAIL — HTTP ' + code + ': ' + res.getContentText().slice(0, 300));
     }
   } catch (err) {
     problems.push('UrlFetch: ' + err.message);
-    Logger.log('[4/4] FAIL — ' + err.message);
+    Logger.log('[5/6] FAIL — ' + err.message);
+  }
+
+  // 6. The configured model exists for this key. A 404 here means CONFIG.MODEL
+  //    is mistyped or not available to this account.
+  try {
+    var mres = UrlFetchApp.fetch(
+      'https://api.anthropic.com/v1/models/' + encodeURIComponent(CONFIG.MODEL), {
+        method: 'get',
+        headers: { 'x-api-key': key, 'anthropic-version': ANTHROPIC_VERSION },
+        muteHttpExceptions: true
+      });
+    var mcode = mres.getResponseCode();
+    if (mcode === 200) {
+      Logger.log('[6/6] Model OK — ' + CONFIG.MODEL + ' is available to this key.');
+    } else if (mcode === 404) {
+      problems.push('Model "' + CONFIG.MODEL + '" not found — check CONFIG.MODEL in Config.gs.');
+      Logger.log('[6/6] FAIL — HTTP 404 for model ' + CONFIG.MODEL + '. Check the ID in Config.gs.');
+    } else {
+      problems.push('Model lookup returned HTTP ' + mcode + '.');
+      Logger.log('[6/6] FAIL — HTTP ' + mcode + ': ' + mres.getContentText().slice(0, 300));
+    }
+  } catch (err) {
+    problems.push('Model lookup: ' + err.message);
+    Logger.log('[6/6] FAIL — ' + err.message);
   }
 
   if (problems.length === 0) {

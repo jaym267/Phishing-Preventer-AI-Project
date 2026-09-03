@@ -1,5 +1,12 @@
 {
   "scriptId": "PASTE_YOUR_SCRIPT_ID_HERE",
   "rootDir": ".",
-  "filePushOrder": ["appsscript.json", "Config.gs"]
+  "filePushOrder": [
+    "appsscript.json",
+    "Config.gs",
+    "Logger.gs",
+    "Classifier.gs",
+    "Main.gs",
+    "Digest.gs"
+  ]
 }

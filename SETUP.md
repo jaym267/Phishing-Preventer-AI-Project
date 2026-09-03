@@ -125,22 +125,25 @@ The first run pops the Google consent screen. Because this script is not
 verified by Google, you will see "Google hasn't verified this app" → click
 **Advanced** → **Go to ScamShield Mail (unsafe)**. This is expected for a
 personal script you wrote yourself; review the scope list on that screen and
-confirm it matches the four above.
+confirm it matches the five above.
 
 Open **Execution log** (Ctrl/Cmd + Enter). A healthy run looks like:
 
 ```
-[1/4] API key found in Script Properties: sk-ant-api03...aB4z (108 chars)
-[2/4] Gmail scope OK — 37 unread message(s) in inbox.
-[3/4] Trigger scope OK — 0 trigger(s) installed.
-[4/4] Anthropic API reachable and key accepted (HTTP 200).
+[1/6] API key found in Script Properties: sk-ant-api03...aB4z (108 chars)
+[2/6] Gmail scope OK — 37 unread message(s) in inbox.
+[3/6] Trigger scope OK — 0 trigger(s) installed.
+[4/6] Send-mail scope OK — 100 email(s) left in today's quota.
+[5/6] Anthropic API reachable and key accepted (HTTP 200).
+[6/6] Model OK — claude-haiku-4-5 is available to this key.
 setup OK
 ```
 
-Step 4 hits `GET /v1/models`, a metadata endpoint that consumes **zero model
-tokens** — so it costs nothing and you can re-run it freely. If it returns 401,
-the stored key is wrong or revoked. If any step fails, the last line reads
-`setup INCOMPLETE` and names the problem.
+Steps 5 and 6 hit `GET /v1/models`, a metadata endpoint that consumes **zero
+model tokens** — so it costs nothing and you can re-run it freely. If step 5
+returns 401 the stored key is wrong or revoked; if step 6 returns 404 the model
+ID in `Config.gs` is mistyped. Step 4 reads a quota counter and sends nothing.
+If any step fails, the last line reads `setup INCOMPLETE` and names the problem.
 
 ---
 
@@ -282,6 +285,77 @@ From: "support@paypal.com <security@paypal.com>" <evil@ru-host.tld>
 
 A regex that grabs the first bracket pair returns `support@paypal.com` — and if
 that were on your allowlist, the attacker would walk straight through.
+
+---
+
+## 7. Stages 2–6 — running it for real
+
+### All the Script Properties
+
+Everything personal or secret lives here, never in the code. Project Settings →
+Script Properties.
+
+| Property | Required | What it is |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | yes | Your key from console.anthropic.com. |
+| `OWNER_EMAIL` | yes | **You.** Gets the daily error report and the kill-switch alert. |
+| `DIGEST_RECIPIENT` | for Stage 5 | The family member who gets the friendly weekly summary. Ask them first. |
+| `LOG_SHEET_ID` | auto | Written by `initLogSheet`. Set it by hand only to point at a sheet you made yourself. |
+| `RESTORE_MESSAGE_ID` | when undoing | Paste a Message ID here, run `restoreMessage`, and it is cleared for you. |
+| `ENFORCE_DISABLED_BY_KILL_SWITCH` | auto | Set by the kill switch. Delete it (or run `clearKillSwitch`) to re-enable enforcement. |
+
+### Stage 2 — prove the classifier works
+
+Run **`testClassifier`**. It sends three canned emails (a gift-card scam, a
+newsletter, pushy marketing) to the API and logs the verdicts. Costs a fraction
+of a cent. You want `scam` with high confidence, `safe`, and either `safe` or
+`suspicious` for the third — the prompt tells the model not to punish an email
+merely for being commercial.
+
+### Stage 3 — let it watch for a week
+
+Run **`installTriggers`** once. From then on `scanInbox` runs every 10 minutes,
+`dailySelfTest` emails you only if something errored, and `sendWeeklyDigest`
+goes out Sunday evening.
+
+**Leave `ENFORCE: false` for at least a week.** Read the Decisions tab with the
+person whose inbox it is. Every row that called a real email `scam` is a message
+it would have hidden. Type `WRONG` in the Review column for each one, then edit
+`CLASSIFICATION_PROMPT` in `Classifier.gs` — that string is the one place the
+policy lives.
+
+### Stage 4 — turn on enforcement
+
+Set `ENFORCE: true` in `Config.gs` and push. Nothing else changes. From then on:
+
+- `scam` at confidence ≥ 0.85 → labelled `ScamShield/Quarantine`, archived, marked read
+- `suspicious`, or `scam` below 0.85 → labelled `ScamShield/Suspicious`, left in the inbox
+- `safe` → untouched
+
+A scam that arrives *inside* an existing conversation is only labelled, never
+archived — Gmail archives whole threads, and hiding the real conversation would
+be the exact false quarantine the prompt is told to fear most.
+
+**Undo a false positive:** copy the Message ID from Decisions → set
+`RESTORE_MESSAGE_ID` → run `restoreMessage`. The thread returns to the inbox and
+the sender is allowlisted.
+
+**The kill switch:** more than 5 errors in an hour disables enforcement by
+itself and emails `OWNER_EMAIL`. Scanning and logging continue. Run
+`clearKillSwitch` once you have fixed the cause.
+
+### Stage 5 — the family email
+
+Run **`sendDigestNow`** to see it immediately. It reads the last 7 days of the
+Decisions tab and sends a plain-language note: how many messages it read, which
+were set aside (sender and subject only, never a body), and how to get one back.
+
+### Stage 6 — how good is it?
+
+The **Summary** tab is live formulas. Once you have marked some rows `WRONG`,
+"Precision on quarantine" is the number to watch: of everything it set aside,
+how much really was a scam. Run `rebuildSummaryTab` if you ever change the
+Decisions columns.
 
 ---
 
