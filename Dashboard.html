@@ -107,7 +107,8 @@
 
   table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
   table.auto { table-layout: auto; }
-  td.when { white-space: nowrap; }
+  td.when { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  td.verdict { overflow: hidden; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { color: var(--ink-2); font-weight: 600; font-size: 13px; position: sticky; top: 0; background: var(--surface); }
   td.num { font-variant-numeric: tabular-nums; text-align: right; }
@@ -408,14 +409,21 @@ function drawDecisions(d) {
     clear(tableWrap);
     if (!rows.length) { tableWrap.appendChild(el('p', { class: 'empty', text: 'No decisions match.' })); }
     else {
+      // With the detail panel open, horizontal room is scarce: the Review value
+      // moves into the panel and its column is not drawn at all.
+      var showReview = !state.selected;
       var tbl = el('table');
       var cg = el('colgroup');
       // Explicit widths for every column but Subject, which takes the rest.
-      ['94px', '16%', '', '118px', '112px', '68px'].forEach(function (w) {
+      var widths = ['128px', '14%', '', '138px', '130px'];
+      if (showReview) widths.push('72px');
+      widths.forEach(function (w) {
         var c = el('col'); if (w) c.style.width = w; cg.appendChild(c);
       });
       tbl.appendChild(cg);
-      tbl.appendChild(el('thead', {}, [el('tr', {}, ['When', 'Sender', 'Subject', 'Verdict', 'Action', 'Review'].map(function (h) { return el('th', { text: h }); }))]));
+      var heads = ['When', 'Sender', 'Subject', 'Verdict', 'Action'];
+      if (showReview) heads.push('Review');
+      tbl.appendChild(el('thead', {}, [el('tr', {}, heads.map(function (h) { return el('th', { text: h }); }))]));
       var tb = el('tbody');
       rows.forEach(function (r) {
         var tr = el('tr', { class: 'clickable' + (state.selected === r.messageId ? ' selected' : ''),
@@ -423,9 +431,9 @@ function drawDecisions(d) {
           el('td', { class: 'when', text: fmtDate(r.messageDate) }),
           el('td', { class: 'sender', text: r.sender, title: r.sender }),
           el('td', { class: 'subject', text: r.subject || '(no subject)', title: r.subject }),
-          el('td', {}, [verdictBadge(r)]),
+          el('td', { class: 'verdict' }, [verdictBadge(r)]),
           el('td', { class: 'action', title: r.actionTaken }, [badge(r.actionTaken, actionLabel(r.actionTaken))]),
-          el('td', { text: r.review })
+          showReview ? el('td', { text: r.review }) : null
         ]);
         tb.appendChild(tr);
       });
@@ -444,7 +452,8 @@ function drawDecisions(d) {
     [['From', r.sender], ['Reply-To', r.replyTo || '—'], ['Received', fmtDate(r.messageDate)],
      ['Verdict', r.verdict + (r.confidence === null ? '' : ' (' + Math.round(r.confidence * 100) + '%)')],
      ['Reasons', r.reasons || '—'], ['Links', String(r.urlCount)], ['Action', r.actionTaken || 'none'],
-     ['Preview', r.bodyPreview || '—'], ['Error', r.error || '—'], ['ID', r.messageId]
+     ['Preview', r.bodyPreview || '—'], ['Review', r.review || 'unreviewed'],
+     ['Error', r.error || '—'], ['ID', r.messageId]
     ].forEach(function (p) { dl.appendChild(el('dt', { text: p[0] })); dl.appendChild(el('dd', { text: p[1] })); });
     box.appendChild(dl);
 
