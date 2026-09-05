@@ -117,9 +117,11 @@
   td.subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   td.sender { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
 
-  .badge { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; max-width: 100%; overflow: hidden; }
+  .badge .conf { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  td.action { overflow: hidden; text-overflow: ellipsis; }
 
-  .split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; }
   .split.solo { grid-template-columns: minmax(0, 1fr); }
   .split > div { min-width: 0; }
   .tablewrap { overflow-x: auto; }
@@ -242,10 +244,18 @@ function badge(kind, labelText) {
   dot.style.background = STATUS[key] || 'var(--ink-muted)';
   return el('span', { class: 'badge' }, [dot, labelText === undefined ? key : labelText]);
 }
+/** Verdict badge with the confidence folded in: "scam · 97%". */
+function verdictBadge(r) {
+  var b = badge(r.verdict);
+  if (r.confidence !== null && r.confidence !== undefined) {
+    b.appendChild(el('span', { class: 'conf', text: '· ' + Math.round(r.confidence * 100) + '%' }));
+  }
+  return b;
+}
 function actionLabel(a) {
   if (!a) return 'none';
   if (a.indexOf('QUARANTINED') === 0) return 'Quarantined';
-  if (a.indexOf('FLAGGED') === 0) return a.indexOf('downgraded') >= 0 ? 'Flagged (downgraded)' : 'Flagged';
+  if (a.indexOf('FLAGGED') === 0) return a.indexOf('downgraded') >= 0 ? 'Flagged (thread)' : 'Flagged';
   if (a.indexOf('RESTORED') === 0) return 'Restored';
   if (a.indexOf('skipped') === 0) return 'Skipped';
   return 'None';
@@ -400,11 +410,12 @@ function drawDecisions(d) {
     else {
       var tbl = el('table');
       var cg = el('colgroup');
-      ['120px', '24%', '', '130px', '64px', '150px', '84px'].forEach(function (w) {
+      // Explicit widths for every column but Subject, which takes the rest.
+      ['94px', '16%', '', '118px', '112px', '68px'].forEach(function (w) {
         var c = el('col'); if (w) c.style.width = w; cg.appendChild(c);
       });
       tbl.appendChild(cg);
-      tbl.appendChild(el('thead', {}, [el('tr', {}, ['When', 'Sender', 'Subject', 'Verdict', 'Conf.', 'Action', 'Review'].map(function (h) { return el('th', { text: h }); }))]));
+      tbl.appendChild(el('thead', {}, [el('tr', {}, ['When', 'Sender', 'Subject', 'Verdict', 'Action', 'Review'].map(function (h) { return el('th', { text: h }); }))]));
       var tb = el('tbody');
       rows.forEach(function (r) {
         var tr = el('tr', { class: 'clickable' + (state.selected === r.messageId ? ' selected' : ''),
@@ -412,9 +423,8 @@ function drawDecisions(d) {
           el('td', { class: 'when', text: fmtDate(r.messageDate) }),
           el('td', { class: 'sender', text: r.sender, title: r.sender }),
           el('td', { class: 'subject', text: r.subject || '(no subject)', title: r.subject }),
-          el('td', {}, [badge(r.verdict)]),
-          el('td', { class: 'num', text: r.confidence === null ? '' : Math.round(r.confidence * 100) + '%' }),
-          el('td', {}, [badge(r.actionTaken, actionLabel(r.actionTaken))]),
+          el('td', {}, [verdictBadge(r)]),
+          el('td', { class: 'action', title: r.actionTaken }, [badge(r.actionTaken, actionLabel(r.actionTaken))]),
           el('td', { text: r.review })
         ]);
         tb.appendChild(tr);
