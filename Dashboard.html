@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ScamShield Mail</title>
+<style>
+  /* ------------------------------------------------------------------ tokens
+     Light is the default; dark redefines the same tokens. Status colors are
+     fixed and never carry meaning alone — every badge pairs a dot with text. */
+  :root {
+    --surface: #fcfcfb;
+    --surface-2: #f3f2ef;
+    --border: #e4e2dc;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --ink-muted: #898781;
+    --accent: #2f5fd6;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --focus: #2f5fd6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19;
+      --surface-2: #232321;
+      --border: #34332f;
+      --ink: #ffffff;
+      --ink-2: #c3c2b7;
+      --ink-muted: #898781;
+      --accent: #7ea2ff;
+      --focus: #7ea2ff;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--surface);
+    color: var(--ink);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    min-height: 100vh;
+  }
+  a { color: var(--accent); }
+  button, select, input {
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover { background: var(--surface-2); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger { border-color: var(--critical); color: var(--critical); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  /* ------------------------------------------------------------------- nav */
+  nav {
+    border-right: 1px solid var(--border);
+    padding: 20px 14px;
+    background: var(--surface-2);
+  }
+  nav h1 { font-size: 17px; margin: 0 0 18px; }
+  nav h1 small { display: block; font-weight: normal; color: var(--ink-muted); font-size: 12px; }
+  nav button {
+    display: block; width: 100%; text-align: left;
+    background: none; border: none; padding: 9px 10px; border-radius: 6px;
+    color: var(--ink-2);
+  }
+  nav button.active { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border); }
+  nav .foot { margin-top: 28px; font-size: 12px; color: var(--ink-muted); }
+
+  /* ------------------------------------------------------------------ main */
+  main { padding: 24px 28px 48px; max-width: 1200px; }
+  h2 { font-size: 22px; margin: 0 0 16px; }
+  h3 { font-size: 15px; margin: 24px 0 10px; color: var(--ink-2); font-weight: 600; }
+  p.help { color: var(--ink-2); margin: 0 0 14px; max-width: 70ch; }
+
+  .banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px;
+    margin-bottom: 18px; background: var(--surface-2);
+  }
+  .banner strong { font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; display: inline-block; }
+
+  .hero { display: flex; align-items: baseline; gap: 18px; margin: 6px 0 18px; }
+  .hero .value { font-size: 52px; font-weight: 600; line-height: 1; }
+  .hero .label { color: var(--ink-2); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .tile { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; background: var(--surface); }
+  .tile .label { color: var(--ink-2); font-size: 13px; }
+  .tile .value { font-size: 28px; font-weight: 600; margin-top: 2px; }
+
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .row label { color: var(--ink-2); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .row input[type=search] { min-width: 240px; }
+  .muted { color: var(--ink-muted); }
+  .small { font-size: 13px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+  table.auto { table-layout: auto; }
+  td.when { white-space: nowrap; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--ink-2); font-weight: 600; font-size: 13px; position: sticky; top: 0; background: var(--surface); }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: var(--surface-2); }
+  tbody tr.selected { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+  td.subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.sender { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+
+  .badge { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+  .split.solo { grid-template-columns: minmax(0, 1fr); }
+  .split > div { min-width: 0; }
+  .tablewrap { overflow-x: auto; }
+  aside.detail {
+    border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px;
+    background: var(--surface-2); position: sticky; top: 16px; font-size: 14px;
+  }
+  aside.detail h4 { margin: 0 0 8px; font-size: 15px; }
+  aside.detail dl { margin: 0; display: grid; grid-template-columns: 90px 1fr; gap: 6px 10px; }
+  aside.detail.status dl { grid-template-columns: 190px 1fr; }
+  aside.detail dt { color: var(--ink-2); }
+  aside.detail dd { margin: 0; overflow-wrap: anywhere; }
+  aside.detail .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+  .empty { color: var(--ink-muted); padding: 22px 0; }
+  .error { color: var(--critical); }
+
+  #toast {
+    position: fixed; right: 20px; bottom: 20px; max-width: 420px;
+    background: var(--ink); color: var(--surface); padding: 12px 16px; border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,.25); font-size: 14px; opacity: 0; transform: translateY(8px);
+    transition: opacity .15s, transform .15s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: none; }
+
+  @media (max-width: 900px) {
+    body { grid-template-columns: 1fr; }
+    nav { border-right: none; border-bottom: 1px solid var(--border); }
+    .split { grid-template-columns: 1fr; }
+    aside.detail { position: static; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <h1>ScamShield Mail<small>maintainer dashboard</small></h1>
+  <button data-view="overview" class="active">Overview</button>
+  <button data-view="decisions">Decisions</button>
+  <button data-view="errors">Errors</button>
+  <button data-view="allowlist">Allowlist</button>
+  <div class="foot" id="foot"></div>
+</nav>
+
+<main id="main"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ==========================================================================
+   Everything below builds DOM with createElement + textContent. Never
+   innerHTML. Subjects, senders and model "reasons" are attacker-written text
+   and they flow straight onto this page; the sandbox is the second wall, not
+   the first.
+   ========================================================================== */
+
+// ---------------------------------------------------------------- server
+/** Promise wrapper over google.script.run. Rejects if the page is opened
+ *  outside Apps Script (e.g. as a local file) so the failure is obvious. */
+function call(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (resolve, reject) {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) {
+      reject(new Error('Not running inside Apps Script — open the web app URL.'));
+      return;
+    }
+    var runner = google.script.run
+      .withSuccessHandler(function (res) {
+        if (res && res.ok) resolve(res.data);
+        else reject(new Error((res && res.error) || 'Unknown server error'));
+      })
+      .withFailureHandler(function (err) { reject(err instanceof Error ? err : new Error(String(err))); });
+    runner[fn].apply(runner, args);
+  });
+}
+
+// ---------------------------------------------------------------- dom
+function el(tag, attrs, children) {
+  var node = document.createElement(tag);
+  if (attrs) Object.keys(attrs).forEach(function (k) {
+    if (k === 'class') node.className = attrs[k];
+    else if (k === 'text') node.textContent = attrs[k];
+    else if (k.indexOf('on') === 0) node.addEventListener(k.slice(2), attrs[k]);
+    else node.setAttribute(k, attrs[k]);
+  });
+  (children || []).forEach(function (c) {
+    if (c === null || c === undefined) return;
+    node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return node;
+}
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+function fmtDate(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+function fmtPct(x) { return (x === null || x === undefined) ? 'no data yet' : Math.round(x * 1000) / 10 + '%'; }
+function compact(n) { return n >= 10000 ? Math.round(n / 1000) + 'K' : String(n); }
+
+var toastTimer;
+function toast(msg, isError) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = isError ? 'var(--critical)' : 'var(--ink)';
+  t.style.color = '#fff';
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.classList.remove('show'); }, 3800);
+}
+
+/** Status badge: a colored dot PLUS a text label. Color never carries meaning alone. */
+var STATUS = {
+  scam: 'var(--critical)', suspicious: 'var(--warning)', safe: 'var(--good)',
+  error: 'var(--serious)', ALLOWLISTED: 'var(--ink-muted)', NOT_CLASSIFIED: 'var(--ink-muted)',
+  QUARANTINED: 'var(--critical)', FLAGGED: 'var(--warning)', RESTORED: 'var(--good)', none: 'var(--ink-muted)'
+};
+function badge(kind, labelText) {
+  var key = String(kind || 'none').split(' ')[0];
+  var dot = el('span', { class: 'dot' });
+  dot.style.background = STATUS[key] || 'var(--ink-muted)';
+  return el('span', { class: 'badge' }, [dot, labelText === undefined ? key : labelText]);
+}
+function actionLabel(a) {
+  if (!a) return 'none';
+  if (a.indexOf('QUARANTINED') === 0) return 'Quarantined';
+  if (a.indexOf('FLAGGED') === 0) return a.indexOf('downgraded') >= 0 ? 'Flagged (downgraded)' : 'Flagged';
+  if (a.indexOf('RESTORED') === 0) return 'Restored';
+  if (a.indexOf('skipped') === 0) return 'Skipped';
+  return 'None';
+}
+
+// ---------------------------------------------------------------- views
+var main = document.getElementById('main');
+var state = { view: 'overview', days: 7, verdict: '', action: '', review: '', q: '', selected: null, rows: [] };
+
+function loading(text) { clear(main); main.appendChild(el('p', { class: 'muted', text: text || 'Loading…' })); }
+function fail(err) {
+  clear(main);
+  main.appendChild(el('p', { class: 'error', text: 'Could not load: ' + (err && err.message || err) }));
+  main.appendChild(el('button', { text: 'Retry', onclick: function () { render(); } }));
+}
+
+function render() {
+  document.querySelectorAll('nav button[data-view]').forEach(function (b) {
+    b.classList.toggle('active', b.getAttribute('data-view') === state.view);
+  });
+  if (state.view === 'overview') return renderOverview();
+  if (state.view === 'decisions') return renderDecisions();
+  if (state.view === 'errors') return renderErrors();
+  return renderAllowlist();
+}
+
+// ---- Overview ----------------------------------------------------------
+function renderOverview() {
+  loading();
+  call('ui_getOverview').then(function (o) {
+    clear(main);
+    main.appendChild(el('h2', { text: 'Overview' }));
+
+    var enforcing = o.mode === 'ENFORCING';
+    var dot = el('span', { class: 'dot' });
+    dot.style.background = enforcing ? 'var(--critical)' : 'var(--ink-muted)';
+    main.appendChild(el('div', { class: 'banner' }, [
+      dot,
+      el('div', {}, [
+        el('strong', { text: enforcing ? 'Enforcing' : 'Observe-only' }),
+        ' — ',
+        enforcing ? 'scam verdicts at or above ' + Math.round(o.threshold * 100) + '% confidence are quarantined.'
+                  : 'every verdict is logged; nothing in the mailbox is touched.'
+      ])
+    ]));
+
+    if (o.killSwitch) {
+      var kdot = el('span', { class: 'dot' }); kdot.style.background = 'var(--serious)';
+      main.appendChild(el('div', { class: 'banner' }, [
+        kdot,
+        el('div', {}, [
+          el('strong', { text: 'Kill switch tripped. ' }),
+          'Enforcement is paused until you clear it from the script editor (clearKillSwitch). ',
+          el('span', { class: 'small muted', text: o.killSwitch })
+        ])
+      ]));
+    }
+
+    var c7 = o.last7;
+    main.appendChild(el('div', { class: 'hero' }, [
+      el('div', { class: 'value', text: fmtPct(c7.precision) }),
+      el('div', { class: 'label' }, [
+        'precision on quarantine, last 7 days',
+        el('br'),
+        el('span', { class: 'small muted', text: c7.quarantined + ' quarantined, ' + c7.falsePositives + ' marked WRONG' })
+      ])
+    ]));
+
+    main.appendChild(tiles(c7, 'Last 7 days'));
+    main.appendChild(tiles(o.last30, 'Last 30 days'));
+
+    main.appendChild(el('h3', { text: 'Status' }));
+    var dl = el('dl');
+    [['Last run', o.lastRun ? fmtDate(o.lastRun) : 'never'],
+     ['Errors, last 24h', String(o.errors24h)],
+     ['Model', o.model],
+     ['ENFORCE flag in Config.gs', o.enforceFlag ? 'true' : 'false']
+    ].forEach(function (p) { dl.appendChild(el('dt', { text: p[0] })); dl.appendChild(el('dd', { text: p[1] })); });
+    var aside = el('aside', { class: 'detail status' }, [dl,
+      el('p', { class: 'small' }, [el('a', { href: o.sheetUrl, target: '_blank', rel: 'noopener', text: 'Open the log spreadsheet' })])]);
+    aside.style.position = 'static'; aside.style.maxWidth = '520px';
+    main.appendChild(aside);
+    document.getElementById('foot').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  }).catch(fail);
+}
+
+function tiles(c, title) {
+  var wrap = el('div');
+  wrap.appendChild(el('h3', { text: title }));
+  var grid = el('div', { class: 'tiles' });
+  [['Messages read', c.scanned], ['Scam', c.scam], ['Suspicious', c.suspicious], ['Safe', c.safe],
+   ['Quarantined', c.quarantined], ['Flagged', c.flagged]
+  ].forEach(function (t) {
+    grid.appendChild(el('div', { class: 'tile' }, [
+      el('div', { class: 'label', text: t[0] }),
+      el('div', { class: 'value', text: compact(t[1]) })
+    ]));
+  });
+  wrap.appendChild(grid);
+  return wrap;
+}
+
+// ---- Decisions ---------------------------------------------------------
+function renderDecisions() {
+  loading();
+  call('ui_getDecisions', state.days).then(function (d) {
+    state.rows = d.rows;
+    drawDecisions(d);
+  }).catch(fail);
+}
+
+function drawDecisions(d) {
+  clear(main);
+  main.appendChild(el('h2', { text: 'Decisions' }));
+  main.appendChild(el('p', { class: 'help', text: 'Click a row to see why. Mark anything you disagree with as WRONG — the Summary tab and the precision figure update from that column.' }));
+
+  var controls = el('div', { class: 'row' });
+  controls.appendChild(sel('Days', ['1', '7', '30', '90'], String(state.days), function (v) { state.days = Number(v); state.selected = null; renderDecisions(); }));
+  controls.appendChild(sel('Verdict', ['', 'scam', 'suspicious', 'safe', 'ALLOWLISTED'], state.verdict, function (v) { state.verdict = v; draw(); }, 'any'));
+  controls.appendChild(sel('Action', ['', 'QUARANTINED', 'FLAGGED', 'RESTORED', 'none'], state.action, function (v) { state.action = v; draw(); }, 'any'));
+  controls.appendChild(sel('Review', ['', 'WRONG', 'OK', 'unreviewed'], state.review, function (v) { state.review = v; draw(); }, 'any'));
+  var search = el('input', { type: 'search', placeholder: 'Search sender or subject', value: state.q,
+    oninput: function (e) { state.q = e.target.value; draw(); } });
+  controls.appendChild(search);
+  var count = el('span', { class: 'small muted' });
+  controls.appendChild(count);
+  main.appendChild(controls);
+
+  var split = el('div', { class: 'split' + (state.selected ? '' : ' solo') });
+  var tableWrap = el('div', { class: 'tablewrap' });
+  var detail = el('div');
+  split.appendChild(tableWrap); split.appendChild(detail);
+  main.appendChild(split);
+
+  function filtered() {
+    var q = state.q.trim().toLowerCase();
+    return state.rows.filter(function (r) {
+      if (state.verdict && r.verdict !== state.verdict) return false;
+      if (state.action === 'none' ? (r.actionTaken && r.actionTaken.indexOf('none') !== 0)
+                                  : (state.action && r.actionTaken.indexOf(state.action) !== 0)) return false;
+      if (state.review === 'unreviewed' ? r.review : (state.review && r.review.toUpperCase() !== state.review)) return false;
+      if (q && (r.sender + ' ' + r.subject).toLowerCase().indexOf(q) < 0) return false;
+      return true;
+    });
+  }
+
+  function draw() {
+    var rows = filtered();
+    count.textContent = rows.length + ' of ' + d.total + (d.total > rows.length && d.total >= 1000 ? ' (capped at 1000)' : '');
+    clear(tableWrap);
+    if (!rows.length) { tableWrap.appendChild(el('p', { class: 'empty', text: 'No decisions match.' })); }
+    else {
+      var tbl = el('table');
+      var cg = el('colgroup');
+      ['120px', '24%', '', '130px', '64px', '150px', '84px'].forEach(function (w) {
+        var c = el('col'); if (w) c.style.width = w; cg.appendChild(c);
+      });
+      tbl.appendChild(cg);
+      tbl.appendChild(el('thead', {}, [el('tr', {}, ['When', 'Sender', 'Subject', 'Verdict', 'Conf.', 'Action', 'Review'].map(function (h) { return el('th', { text: h }); }))]));
+      var tb = el('tbody');
+      rows.forEach(function (r) {
+        var tr = el('tr', { class: 'clickable' + (state.selected === r.messageId ? ' selected' : ''),
+          onclick: function () { state.selected = state.selected === r.messageId ? null : r.messageId; split.classList.toggle('solo', !state.selected); draw(); drawDetail(); } }, [
+          el('td', { class: 'when', text: fmtDate(r.messageDate) }),
+          el('td', { class: 'sender', text: r.sender, title: r.sender }),
+          el('td', { class: 'subject', text: r.subject || '(no subject)', title: r.subject }),
+          el('td', {}, [badge(r.verdict)]),
+          el('td', { class: 'num', text: r.confidence === null ? '' : Math.round(r.confidence * 100) + '%' }),
+          el('td', {}, [badge(r.actionTaken, actionLabel(r.actionTaken))]),
+          el('td', { text: r.review })
+        ]);
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+      tableWrap.appendChild(tbl);
+    }
+  }
+
+  function drawDetail() {
+    clear(detail);
+    var r = state.rows.filter(function (x) { return x.messageId === state.selected; })[0];
+    if (!r) return;
+    var box = el('aside', { class: 'detail' });
+    box.appendChild(el('h4', { text: r.subject || '(no subject)' }));
+    var dl = el('dl');
+    [['From', r.sender], ['Reply-To', r.replyTo || '—'], ['Received', fmtDate(r.messageDate)],
+     ['Verdict', r.verdict + (r.confidence === null ? '' : ' (' + Math.round(r.confidence * 100) + '%)')],
+     ['Reasons', r.reasons || '—'], ['Links', String(r.urlCount)], ['Action', r.actionTaken || 'none'],
+     ['Preview', r.bodyPreview || '—'], ['Error', r.error || '—'], ['ID', r.messageId]
+    ].forEach(function (p) { dl.appendChild(el('dt', { text: p[0] })); dl.appendChild(el('dd', { text: p[1] })); });
+    box.appendChild(dl);
+
+    var acts = el('div', { class: 'actions' });
+    function reviewBtn(label, value, cls) {
+      return el('button', { class: cls || '', text: label, onclick: function () {
+        setBusy(acts, true);
+        call('ui_setReview', r.messageId, value).then(function () {
+          r.review = value; toast(value ? 'Marked ' + value : 'Review cleared'); draw(); drawDetail();
+        }).catch(function (e) { toast(e.message, true); setBusy(acts, false); });
+      } });
+    }
+    if (r.review.toUpperCase() !== 'WRONG') acts.appendChild(reviewBtn('Mark WRONG', 'WRONG', 'danger'));
+    if (r.review.toUpperCase() !== 'OK') acts.appendChild(reviewBtn('Mark OK', 'OK'));
+    if (r.review) acts.appendChild(reviewBtn('Clear review', ''));
+    if (r.actionTaken.indexOf('QUARANTINED') === 0) {
+      acts.appendChild(el('button', { class: 'primary', text: 'Restore to inbox', onclick: function () {
+        if (!confirm('Put this message back in the inbox and add ' + r.sender + ' to the allowlist?\n\nThat sender will never be scanned again.')) return;
+        setBusy(acts, true);
+        call('ui_restore', r.messageId).then(function (res) {
+          toast('Restored. ' + (res.allowlistAdded ? res.sender + ' added to the allowlist.' : res.sender + ' was already allowlisted.'));
+          renderDecisions();
+        }).catch(function (e) { toast(e.message, true); setBusy(acts, false); });
+      } }));
+    }
+    box.appendChild(acts);
+    detail.appendChild(box);
+  }
+
+  draw();
+  drawDetail();
+}
+
+function setBusy(container, busy) {
+  container.querySelectorAll('button').forEach(function (b) { b.disabled = busy; });
+}
+
+function sel(labelText, options, value, onChange, blankLabel) {
+  var s = el('select', { onchange: function (e) { onChange(e.target.value); } });
+  options.forEach(function (o) {
+    var opt = el('option', { value: o, text: o === '' ? (blankLabel || o) : o });
+    if (o === value) opt.selected = true;
+    s.appendChild(opt);
+  });
+  return el('label', {}, [labelText, s]);
+}
+
+// ---- Errors ------------------------------------------------------------
+function renderErrors() {
+  loading();
+  call('ui_getErrors', state.days).then(function (d) {
+    clear(main);
+    main.appendChild(el('h2', { text: 'Errors' }));
+    main.appendChild(el('p', { class: 'help', text: 'Every failure the script logged. An errored message is never acted on, and it is retried on the next run while it is still inside the polling window.' }));
+    var controls = el('div', { class: 'row' });
+    controls.appendChild(sel('Days', ['1', '7', '30', '90'], String(state.days), function (v) { state.days = Number(v); renderErrors(); }));
+    controls.appendChild(el('span', { class: 'small muted', text: d.rows.length + ' error(s)' }));
+    main.appendChild(controls);
+    if (!d.rows.length) { main.appendChild(el('p', { class: 'empty', text: 'No errors in this period. Good.' })); return; }
+    var tbl = el('table', { class: 'auto' });
+    tbl.appendChild(el('thead', {}, [el('tr', {}, ['When', 'Where', 'Message ID', 'Error'].map(function (h) { return el('th', { text: h }); }))]));
+    var tb = el('tbody');
+    d.rows.forEach(function (e) {
+      tb.appendChild(el('tr', {}, [
+        el('td', { class: 'when', text: fmtDate(e.when) }), el('td', { text: e.where }),
+        el('td', { class: 'small muted', text: e.messageId }), el('td', { text: e.error })
+      ]));
+    });
+    tbl.appendChild(tb); main.appendChild(tbl);
+  }).catch(fail);
+}
+
+// ---- Allowlist ---------------------------------------------------------
+function renderAllowlist() {
+  loading();
+  call('ui_getAllowlist').then(function (d) { drawAllowlist(d); }).catch(fail);
+}
+function drawAllowlist(d) {
+  clear(main);
+  main.appendChild(el('h2', { text: 'Allowlist' }));
+  main.appendChild(el('p', { class: 'help', text: 'Senders here are never scanned and never quarantined — whatever the classifier would have said. Sender addresses can be forged, so prefer exact addresses over whole domains.' }));
+  main.appendChild(el('p', { class: 'small muted', text: d.subdomains
+    ? 'Domain entries also match their subdomains (ALLOWLIST_MATCH_SUBDOMAINS is on).'
+    : 'A domain entry matches that exact domain only; add subdomains explicitly.' }));
+
+  var form = el('form', { class: 'row', onsubmit: function (e) {
+    e.preventDefault();
+    var entry = form.querySelector('[name=entry]').value, note = form.querySelector('[name=note]').value;
+    form.querySelector('button').disabled = true;
+    call('ui_addAllowlist', entry, note).then(function (res) {
+      toast(res.added ? 'Added ' + entry.trim().toLowerCase() : 'Already on the allowlist');
+      drawAllowlist({ rows: res.rows, subdomains: d.subdomains });
+    }).catch(function (err) { toast(err.message, true); form.querySelector('button').disabled = false; });
+  } });
+  form.appendChild(el('input', { name: 'entry', placeholder: 'alice@example.com or example.com', required: 'required', autocomplete: 'off' }));
+  form.appendChild(el('input', { name: 'note', placeholder: 'note (optional)' }));
+  form.appendChild(el('button', { class: 'primary', type: 'submit', text: 'Add' }));
+  main.appendChild(form);
+
+  if (!d.rows.length) { main.appendChild(el('p', { class: 'empty', text: 'Nothing on the allowlist yet.' })); return; }
+  var tbl = el('table', { class: 'auto' });
+  tbl.appendChild(el('thead', {}, [el('tr', {}, [el('th', { text: 'Entry' }), el('th', { text: 'Note' }), el('th', { text: '' })])]));
+  var tb = el('tbody');
+  d.rows.forEach(function (r) {
+    var btn = el('button', { class: 'danger', text: 'Remove', onclick: function () {
+      if (!confirm('Remove ' + r.entry + ' from the allowlist? It will be scanned again from now on.')) return;
+      btn.disabled = true;
+      call('ui_removeAllowlist', r.entry).then(function (res) {
+        toast('Removed ' + r.entry); drawAllowlist({ rows: res.rows, subdomains: d.subdomains });
+      }).catch(function (err) { toast(err.message, true); btn.disabled = false; });
+    } });
+    tb.appendChild(el('tr', {}, [el('td', { text: r.entry }), el('td', { class: 'muted', text: r.note }), el('td', {}, [btn])]));
+  });
+  tbl.appendChild(tb); main.appendChild(tbl);
+}
+
+// ---------------------------------------------------------------- boot
+document.querySelectorAll('nav button[data-view]').forEach(function (b) {
+  b.addEventListener('click', function () { state.view = b.getAttribute('data-view'); state.selected = null; render(); });
+});
+render();
+</script>
+</body>
+</html>
