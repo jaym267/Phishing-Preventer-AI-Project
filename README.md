@@ -65,6 +65,14 @@ daily  -> email you if anything errored
 
 `SETUP.md` has the step-by-step install and the Apps Script quota notes.
 
+**Two frontends live alongside the script:**
+
+- A **maintainer dashboard** (`Dashboard.gs` + `Dashboard.html`) served by the
+  script itself as a private web app — browse decisions, mark rows WRONG, restore
+  a message, manage the allowlist. Deploy steps are in `SETUP.md` §8.
+- A **public landing page** (`site/`, Astro, static) explaining the project.
+  Built by GitHub Actions to GitHub Pages on push.
+
 ---
 
 ## Installing it on a family member's account

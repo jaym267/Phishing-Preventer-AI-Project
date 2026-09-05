@@ -359,6 +359,39 @@ Decisions columns.
 
 ---
 
+## 8. The dashboard (web app)
+
+The script can serve a small web page to you — and only you — from
+`script.google.com`. It replaces squinting at the Sheet: browse decisions, mark
+rows WRONG, restore a quarantined message, manage the allowlist. It cannot flip
+`ENFORCE` or clear the kill switch; those stay deliberate editor actions.
+
+**Deploy it once:** editor → **Deploy → New deployment** → type **Web app** →
+*Execute as:* **Me** → *Who has access:* **Only myself** → Deploy. Copy the URL.
+The manifest already pins that policy (`webapp.executeAs` / `webapp.access`), so
+the dialog should show it pre-filled.
+
+Two URLs exist and it matters which you use:
+
+- **`/exec`** — the deployed version. After every `clasp push` you must
+  **Deploy → Manage deployments → edit → New version** or it keeps serving old
+  code.
+- **`/dev`** — always the latest *saved* code, owner only. Use this while
+  iterating; nothing to redeploy.
+
+**No new scope.** HtmlService needs none, so there is no consent prompt.
+
+**How it stays safe.** Only functions *without* a trailing underscore can be
+called from the page, so its entire server surface is the eight `ui_*` functions
+in `Dashboard.gs`; the page builds every element with `textContent`, never
+`innerHTML`, because subjects and senders are attacker-written; and `Dashboard.gs`
+never reads the API key or touches Script Properties (a test greps for it).
+
+`.claspignore` whitelists only root-level `.gs`/`.html` files and the manifest,
+so the Astro landing page in `site/` can never be pushed into Apps Script.
+
+---
+
 ## Apps Script limits that shape this design
 
 Worth knowing now, because they explain choices in later stages:

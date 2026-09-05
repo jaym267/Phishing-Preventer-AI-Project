@@ -1,0 +1,74 @@
+---
+import Base from '../layouts/Base.astro';
+const repo = 'https://github.com/jaym267/Phishing-Preventer-AI-Project';
+---
+<Base
+  title="Install ScamShield Mail"
+  description="Consent-first steps for installing ScamShield Mail on a family member's Google account. About thirty minutes."
+>
+  <h1>Installing it on someone's account</h1>
+  <p class="lede">About thirty minutes, once. Start with the conversation, not the computer.</p>
+
+  <div class="note warn">
+    <strong>Ask first, in plain words.</strong> This reads their email. Something like:
+    <em>"It looks at who sent each message and what it says, sends a short summary to an AI service
+    to ask whether it looks like a scam, and moves the bad ones into a folder. It never deletes
+    anything, and I get a weekly summary. Can I set it up?"</em> If they are uncomfortable, stop.
+  </div>
+
+  <h2>What you will need</h2>
+  <ul>
+    <li>Access to their Google account, with their permission, for about half an hour.</li>
+    <li>An API key from <a href="https://console.anthropic.com" rel="noopener">console.anthropic.com</a>. Usage is billed per message; expect a few dollars a month.</li>
+    <li>Your own email address (for error alerts) and the address of whoever should get the weekly summary.</li>
+  </ul>
+
+  <h2>Steps</h2>
+  <ol>
+    <li><strong>Create the script.</strong> Go to <a href="https://script.google.com" rel="noopener">script.google.com</a> → New project → name it <em>ScamShield Mail</em>. In Project Settings, tick <em>Show "appsscript.json" manifest file in editor</em>.</li>
+    <li><strong>Add the code.</strong> Copy each <code>.gs</code> and <code>.html</code> file from <a href={repo} rel="noopener">the repository</a> into the editor, and paste <code>appsscript.json</code> into the manifest. (Or use <code>clasp push</code> — the repository's <code>SETUP.md</code> explains both.)</li>
+    <li><strong>Add the API key.</strong> Project Settings → Script Properties → add <code>ANTHROPIC_API_KEY</code>.</li>
+    <li><strong>Add the two addresses</strong>, also as Script Properties: <code>OWNER_EMAIL</code> (you) and <code>DIGEST_RECIPIENT</code> (who gets the weekly summary).</li>
+    <li><strong>Run <code>checkSetup</code>.</strong> Approve the consent screen — it will say Google hasn't verified the app, which is expected for a script you installed yourself. It should end with <code>setup OK</code>.</li>
+    <li><strong>Run <code>initLogSheet</code>.</strong> It creates the spreadsheet and prints the link. Bookmark it.</li>
+    <li><strong>Run <code>scanInbox</code> once by hand</strong> and look at the Decisions tab.</li>
+    <li><strong>Run <code>installTriggers</code>.</strong> From now on it runs by itself.</li>
+    <li><strong>Leave it in watch-only mode for at least a week.</strong> This is the step that matters.</li>
+  </ol>
+
+  <h2>The watch-only week</h2>
+  <p>
+    Enforcement starts <em>off</em> on purpose. For a week, read the Decisions tab with the person
+    whose inbox it is. You are looking for rows where it called something a scam that obviously was
+    not — each one is a real email it would have hidden. Mark those rows <code>WRONG</code>.
+  </p>
+  <p>
+    When the verdicts look right, set <code>ENFORCE: true</code> in <code>Config.gs</code> and save.
+    Nothing else changes.
+  </p>
+
+  <h2>Undoing anything</h2>
+  <table>
+    <thead><tr><th>You want to</th><th>Do this</th></tr></thead>
+    <tbody>
+      <tr><td>Get one message back</td><td>Copy its ID from the Decisions tab into the <code>RESTORE_MESSAGE_ID</code> setting and run <code>restoreMessage</code>. It returns to the inbox and the sender is allowlisted.</td></tr>
+      <tr><td>Stop quarantining, keep watching</td><td>Set <code>ENFORCE: false</code> and save.</td></tr>
+      <tr><td>Stop it running entirely</td><td>Run <code>removeTriggers</code>.</td></tr>
+      <tr><td>Find everything it has set aside</td><td>Open the <code>ScamShield/Quarantine</code> label in Gmail. It is all there.</td></tr>
+      <tr><td>Remove it completely</td><td>Run <code>removeTriggers</code>, delete the script project, delete the two labels. Archived mail stays archived — move back anything you want first.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>A dashboard, if you want one</h2>
+  <p>
+    The script can also serve a small private web page — for you only — that replaces reading the
+    spreadsheet: browse decisions, mark rows, restore a message, manage the allowlist. It is
+    optional. The repository's <code>SETUP.md</code> explains how to deploy it.
+  </p>
+
+  <p class="note">
+    Full details, the list of every setting, and the Apps Script limits that shaped the design are
+    in <a href={`${repo}/blob/main/SETUP.md`} rel="noopener">SETUP.md</a> and
+    <a href={`${repo}/blob/main/README.md`} rel="noopener">README.md</a>.
+  </p>
+</Base>

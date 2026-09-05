@@ -1,0 +1,94 @@
+---
+import Base from '../layouts/Base.astro';
+const base = import.meta.env.BASE_URL;
+const repo = 'https://github.com/jaym267/Phishing-Preventer-AI-Project';
+---
+<Base
+  title="ScamShield Mail — a quiet guard for an older adult's inbox"
+  description="A small Google Apps Script that watches a Gmail inbox for scams, asks Claude whether each new message looks like phishing, and moves the convincing ones aside. It never deletes anything."
+>
+  <h1>A quiet guard for an older adult's inbox.</h1>
+  <p class="lede">
+    ScamShield Mail watches a Gmail inbox for phishing and scams. Every few minutes it reads new
+    mail, asks an AI whether each message looks like a scam, and moves the convincing ones out of
+    the way — by <strong>labelling and archiving</strong> them, never deleting. Every decision is
+    written to a spreadsheet so you can check its work.
+  </p>
+  <div class="ctas">
+    <a class="cta" href={`${base}install/`}>How to install it</a>
+    <a class="cta secondary" href={repo} rel="noopener">Read the source</a>
+  </div>
+  <p class="note">
+    It is built to be boring and reversible. The worst thing it can do to a real email is put it in
+    a folder.
+  </p>
+
+  <h2>Who it is for</h2>
+  <p>
+    A son, daughter, or grandchild who is worried about the scam email a parent or grandparent
+    receives, and who is comfortable following a set of technical steps once. You install it on
+    their Google account — with their consent — and you get a plain-language email each week
+    saying what it did.
+  </p>
+
+  <h2>The six hard rules</h2>
+  <p>These are not preferences. They are the design, and the code is arranged so that breaking one takes deliberate effort.</p>
+  <ol class="rules">
+    <li><strong>It never deletes email.</strong> The strongest thing it can do is label a message, move it out of the inbox, and mark it read. The permission it requests from Google is physically incapable of deleting mail.</li>
+    <li><strong>It ships switched off.</strong> Until you deliberately turn enforcement on, it only watches and logs. It will not touch a single message.</li>
+    <li><strong>It sends the minimum.</strong> Only the sender, subject, links, and the first part of the text ever leave the account. Never attachments. The log keeps at most 200 characters of any message.</li>
+    <li><strong>It fails safe.</strong> Any error means <em>no action</em> on that message and a note in the log. An email is never quarantined because of a bug.</li>
+    <li><strong>The key stays secret.</strong> The AI service key lives in Google's own settings store — never in the code, a log, or the spreadsheet.</li>
+    <li><strong>The allowlist is absolute.</strong> A sender you trust is never scanned and never quarantined, whatever the classifier might say.</li>
+  </ol>
+
+  <h2>How it works</h2>
+  <ul class="flow">
+    <li>Every 10 minutes, it looks for new, unread mail in the inbox.</li>
+    <li>It skips anything it has already seen, and anything from a sender on the allowlist.</li>
+    <li>It sends a short summary of the message — who sent it, the subject, the links, the first part of the text — to Claude and asks: <em>scam, suspicious, or safe?</em></li>
+    <li>It writes one row to the spreadsheet: what it decided, how confident it was, and why.</li>
+    <li>
+      Only if enforcement is on:
+      <div class="branch">
+        A clear scam → labelled <code>ScamShield/Quarantine</code>, moved out of the inbox, marked read.<br />
+        Something that merely looks odd → labelled <code>ScamShield/Suspicious</code>, left where it is.<br />
+        Safe → nothing happens.
+      </div>
+    </li>
+    <li>Every Sunday, a friendly email goes to a family member: how many messages it read, which ones it set aside, and how to get one back.</li>
+  </ul>
+
+  <h2>Getting one back</h2>
+  <p>
+    Nothing is deleted, so nothing is ever lost. Every set-aside message sits in a Gmail label where it
+    can be read at any time. Putting one back in the inbox takes one step, and the sender is added
+    to the allowlist so it cannot happen again.
+  </p>
+
+  <h2>What it costs</h2>
+  <p>
+    Google charges nothing. The AI service charges per message — roughly <strong>a few dollars a
+    month</strong> for a typical inbox with the default model. The exact figure depends on how much
+    mail arrives and which model you choose.
+  </p>
+
+  <h2>What it is not</h2>
+  <ul>
+    <li><strong>Not a spam filter.</strong> Gmail already has one. This looks for the persuasive, personal scams that get past it — gift-card requests, fake bank warnings, someone pretending to be family.</li>
+    <li><strong>Not perfect.</strong> It will occasionally set aside a real email, and it will occasionally miss a scam. That is why it starts in watch-only mode and keeps a log you can review.</li>
+    <li><strong>Not a product.</strong> It is a personal project you run yourself, on an account you have permission to manage.</li>
+  </ul>
+
+  <h2>Honest limitations</h2>
+  <ul>
+    <li>It only sees mail that is still <em>unread</em> when it runs. If the message is opened first, it is not examined.</li>
+    <li>It trusts the "From" address for the allowlist, and that address can be forged. Prefer exact addresses over whole domains.</li>
+    <li>A scam that arrives as a reply inside a real conversation is only labelled, never archived — hiding the real conversation would be worse.</li>
+    <li>Its accuracy has not yet been measured on real data. The spreadsheet computes precision as soon as you start marking rows.</li>
+  </ul>
+
+  <div class="ctas">
+    <a class="cta" href={`${base}install/`}>Install it</a>
+  </div>
+</Base>
