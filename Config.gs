@@ -412,6 +412,17 @@ function getOwnerEmail_() {
  *
  * @return {boolean}
  */
+/**
+ * The kill-switch reason, or '' when it is not tripped. Read-only accessor so
+ * Dashboard.gs can DISPLAY the state without touching PropertiesService — the
+ * dashboard is deliberately unable to clear it.
+ * @return {string}
+ */
+function getKillSwitchReason_() {
+  return PropertiesService.getScriptProperties()
+    .getProperty(PROP.ENFORCE_DISABLED_BY_KILL_SWITCH) || '';
+}
+
 function isEnforcementActive_() {
   if (!CONFIG.ENFORCE) return false;
   var tripped = PropertiesService.getScriptProperties()

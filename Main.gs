@@ -1015,17 +1015,40 @@ function restoreMessage(messageId) {
   }
   var id = String(messageId).replace(/^'/, '').trim();
 
+  var result = restoreById_(id);
+  if (!result.ok) {
+    Logger.log(result.error);
+    return;
+  }
+
+  Logger.log('Restored "' + result.subject + '" to the inbox.');
+  Logger.log(result.allowlistAdded
+    ? 'Added ' + result.sender + ' to the allowlist — it will never be scanned again.'
+    : result.sender + ' was already on the allowlist.');
+
+  // One-shot: clear the property so re-running the function later does not
+  // silently re-restore (and re-allowlist) the same message.
+  if (fromProperty) props.deleteProperty(PROP.RESTORE_MESSAGE_ID);
+}
+
+/**
+ * The restore itself, shared by restoreMessage() (editor) and ui_restore()
+ * (dashboard). Never throws; reports through the result object.
+ *
+ * @param {string} id A clean message ID.
+ * @return {{ok: boolean, error: string, subject: string, sender: string,
+ *          allowlistAdded: boolean}}
+ */
+function restoreById_(id) {
+  var fail = function (m) { return { ok: false, error: m, subject: '', sender: '', allowlistAdded: false }; };
+
   var msg;
   try {
     msg = GmailApp.getMessageById(id);
   } catch (err) {
-    Logger.log('Could not find a message with ID "' + id + '": ' + err.message);
-    return;
+    return fail('Could not find a message with ID "' + id + '": ' + err.message);
   }
-  if (!msg) {
-    Logger.log('Could not find a message with ID "' + id + '".');
-    return;
-  }
+  if (!msg) return fail('Could not find a message with ID "' + id + '".');
 
   var labels = ensureLabels_();
   var thread = msg.getThread();
@@ -1052,14 +1075,7 @@ function restoreMessage(messageId) {
     error: ''
   });
 
-  Logger.log('Restored "' + msg.getSubject() + '" to the inbox.');
-  Logger.log(added
-    ? 'Added ' + sender + ' to the allowlist — it will never be scanned again.'
-    : sender + ' was already on the allowlist.');
-
-  // One-shot: clear the property so re-running the function later does not
-  // silently re-restore (and re-allowlist) the same message.
-  if (fromProperty) props.deleteProperty(PROP.RESTORE_MESSAGE_ID);
+  return { ok: true, error: '', subject: msg.getSubject(), sender: sender, allowlistAdded: added };
 }
 
 // ---------------------------------------------------------------------------

@@ -766,3 +766,89 @@ function columnLetter_(index) {
   }
   return s;
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard support
+// ---------------------------------------------------------------------------
+
+/**
+ * Allowlist rows with their notes, for display. Comment rows are skipped.
+ * (getAllowlist_ returns bare normalized strings for matching; this is the
+ * human-facing view.)
+ *
+ * @return {Array<{entry: string, note: string}>}
+ */
+function getAllowlistRows_() {
+  var sheet = getLogSpreadsheet_().getSheetByName(TAB.ALLOWLIST);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  var out = [];
+  for (var i = 0; i < values.length; i++) {
+    var entry = unmarkCell_(values[i][0]);
+    if (!entry || entry.charAt(0) === '#') continue;
+    entry = entry.toLowerCase();
+    if (entry.charAt(0) === '@') entry = entry.slice(1);
+    out.push({ entry: entry, note: unmarkCell_(values[i][1]) });
+  }
+  return out;
+}
+
+/**
+ * Removes every allowlist row matching `entry`. Walks bottom-up so row indices
+ * stay valid while deleting.
+ *
+ * @param {string} entry
+ * @return {number} Rows removed.
+ */
+function removeFromAllowlist_(entry) {
+  var target = String(entry || '').trim().toLowerCase();
+  if (target.charAt(0) === '@') target = target.slice(1);
+  if (!target) return 0;
+
+  var sheet = getLogSpreadsheet_().getSheetByName(TAB.ALLOWLIST);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+
+  var values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  var removed = 0;
+  for (var i = values.length - 1; i >= 0; i--) {
+    var e = unmarkCell_(values[i][0]).toLowerCase();
+    if (e.charAt(0) === '@') e = e.slice(1);
+    if (e === target) {
+      sheet.deleteRow(i + 2);
+      removed++;
+    }
+  }
+  ALLOWLIST_CACHE_ = null;   // the matching cache is now stale
+  return removed;
+}
+
+/**
+ * Writes the Review cell for one Decisions row, found by Message ID.
+ *
+ * Searches the same bounded tail as dedupe. Review values are whitelisted
+ * constants (see UI_REVIEW_VALUES in Dashboard.gs), so they are written raw —
+ * the Summary tab's COUNTIF("WRONG*") must match them exactly.
+ *
+ * @param {string} messageId
+ * @param {string} value '' | 'WRONG' | 'OK'
+ * @return {boolean} true if a row was found and written.
+ */
+function setReview_(messageId, value) {
+  var sheet = getLogSpreadsheet_().getSheetByName(TAB.DECISIONS);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+
+  var startRow = Math.max(2, lastRow - CONFIG.DEDUPE_LOOKBACK_ROWS + 1);
+  var n = lastRow - startRow + 1;
+  var ids = sheet.getRange(startRow, decisionColumn_('Message ID'), n, 1).getValues();
+
+  for (var i = ids.length - 1; i >= 0; i--) {
+    if (unmarkCell_(ids[i][0]) === messageId) {
+      sheet.getRange(startRow + i, decisionColumn_('Review')).setValue(String(value || ''));
+      return true;
+    }
+  }
+  return false;
+}
